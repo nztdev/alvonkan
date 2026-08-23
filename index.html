@@ -1,0 +1,4047 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Al Von Kan: Necro King — Shard World</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#04020a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="apple-touch-icon" href="icon-192.png">
+<!-- Hoist _simFS and toggleFullscreen stub so the fs-btn onclick never
+     hits a temporal dead zone — the real implementation is overwritten
+     later in the main script block once the full closure is built. -->
+<script>
+  var _simFS = false;
+  function toggleFullscreen() {
+    // Delegated — real implementation assigned below after Three.js loads
+    if (window._toggleFullscreenImpl) window._toggleFullscreenImpl();
+  }
+</script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700;900&family=UnifrakturMaguntia&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap');
+  :root {
+    --void:#04020a; --deep:#0a0515; --shadow:#12082a; --mid:#1e1040;
+    --purple:#2d1b69; --violet:#5b21b6; --mana:#7c3aed; --mana-glow:#a78bfa;
+    --bone:#d4c5a9; --bone-dim:#8b7d6b; --health:#dc2626; --health-bright:#ef4444;
+    --gold:#d97706; --gold-bright:#fbbf24; --text:#e9e4f0; --text-dim:#9ca3af;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none;}
+  html{width:100%;height:100%;overflow:hidden;background:var(--void);}
+  body{width:100%;height:100vh;height:100svh;overflow:hidden;background:var(--void);cursor:default;font-family:'Crimson Text',serif;color:var(--text);position:fixed;inset:0;}
+
+  #three-canvas{position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;display:block;}
+  #fx-canvas{position:fixed;top:0;left:0;width:100%;height:100%;z-index:1;pointer-events:none;}
+
+  /* ── HUD ── */
+  #hud{position:fixed;top:10px;left:10px;right:54px;display:flex;justify-content:space-between;align-items:flex-start;pointer-events:none;z-index:10;}
+  .stat-block{display:flex;flex-direction:column;gap:5px;}
+  .stat-block-right{align-items:flex-end;}
+  .bar-label{font-family:'Cinzel',serif;font-size:8px;letter-spacing:2px;text-transform:uppercase;color:var(--text-dim);}
+  .bar-outer{width:170px;height:11px;background:rgba(0,0,0,0.7);border:1px solid rgba(255,255,255,0.08);overflow:hidden;}
+  #health-bar-inner{height:100%;background:linear-gradient(90deg,#7f1d1d,var(--health-bright));transition:width 0.25s;box-shadow:0 0 8px var(--health);}
+  #mana-bar-inner{height:100%;background:linear-gradient(90deg,var(--purple),var(--mana-glow));transition:width 0.25s;box-shadow:0 0 8px var(--mana);}
+  #wave-info{text-align:center;font-family:'Cinzel',serif;}
+  #wave-title{font-size:10px;letter-spacing:3px;color:var(--gold);text-shadow:0 0 12px var(--gold);}
+  #wave-number{font-size:24px;font-weight:900;color:var(--bone);text-shadow:0 0 20px rgba(212,197,169,0.4);}
+  @keyframes hpPulse{0%,100%{box-shadow:0 0 8px var(--health);}50%{box-shadow:0 0 22px #ff0000;}}
+
+  /* Aggression bonus indicator */
+  #aggro-bonus{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+    pointer-events:none;z-index:15;display:none;
+    font-family:'Cinzel',serif;font-size:11px;letter-spacing:2px;
+    color:#fbbf24;text-shadow:0 0 16px #d97706;text-transform:uppercase;
+    animation:aggroPulse 0.5s ease infinite alternate;}
+  @keyframes aggroPulse{from{opacity:0.7;}to{opacity:1;text-shadow:0 0 24px #fbbf24;}}
+
+  /* Rally button */
+  #btn-rally{background:rgba(20,8,5,0.92);border-color:rgba(217,119,6,0.55);}
+  #btn-rally .ic{color:#fbbf24;}
+  #btn-rally:hover,#btn-rally:active{border-color:#fbbf24;box-shadow:0 0 18px rgba(217,119,6,0.6);}
+  #btn-rally.cooldown{opacity:0.4;pointer-events:none;}
+  #rally-cd{font-size:14px;font-family:'Cinzel',serif;color:#fbbf24;line-height:1;}
+
+  /* Boss compass */
+  #boss-compass{position:fixed;top:50%;right:14px;transform:translateY(-50%);
+    width:36px;height:36px;border-radius:50%;
+    border:1.5px solid rgba(217,119,6,0.6);background:rgba(10,5,21,0.85);
+    display:none;align-items:center;justify-content:center;
+    pointer-events:none;z-index:11;}
+  #boss-compass.visible{display:flex;}
+  #boss-compass-arrow{font-size:18px;color:#fbbf24;transform-origin:center;
+    text-shadow:0 0 10px #d97706;transition:transform 0.1s;}
+
+  /* Mana shard collectible label */
+  .shard-label{position:fixed;pointer-events:none;font-family:'Cinzel',serif;
+    font-size:9px;color:#a78bfa;text-shadow:0 0 8px #7c3aed;
+    transform:translate(-50%,-100%);z-index:12;}
+  .hp-critical #health-bar-inner{animation:hpPulse 0.6s ease infinite;}
+
+  /* ── Boss bar ── */
+  #boss-bar-wrap{position:fixed;top:64px;left:50%;transform:translateX(-50%);display:none;flex-direction:column;align-items:center;gap:3px;pointer-events:none;z-index:12;min-width:240px;}
+  #boss-bar-wrap.visible{display:flex;}
+  #boss-name-label{font-family:'Cinzel',serif;font-size:10px;letter-spacing:3px;color:#fbbf24;text-shadow:0 0 12px #d97706;text-transform:uppercase;}
+  #boss-phase-label{font-family:'Crimson Text',serif;font-size:9px;font-style:italic;color:#f59e0b;letter-spacing:1px;}
+  #boss-bar-outer{width:240px;height:12px;background:rgba(0,0,0,0.8);border:1px solid rgba(217,119,6,0.5);overflow:hidden;}
+  #boss-bar-inner{height:100%;background:linear-gradient(90deg,#78350f,#fbbf24);transition:width 0.3s;box-shadow:0 0 10px #d97706;}
+
+  /* ── Target reticle & nameplate ── */
+  #target-plate{position:fixed;display:none;flex-direction:column;align-items:center;pointer-events:none;z-index:9;transform:translate(-50%,-100%);}
+  #target-plate.visible{display:flex;}
+  #target-name{font-family:'Cinzel',serif;font-size:9px;letter-spacing:1px;color:var(--mana-glow);text-shadow:0 0 8px rgba(124,58,237,0.8);text-transform:uppercase;margin-bottom:2px;}
+  #target-hp-outer{width:70px;height:5px;background:rgba(0,0,0,0.7);border:1px solid rgba(124,58,237,0.4);}
+  #target-hp-inner{height:100%;background:linear-gradient(90deg,#5b21b6,#c4b5fd);}
+  #target-ring{width:34px;height:34px;border:2px solid rgba(196,181,253,0.75);border-radius:50%;margin-top:3px;box-shadow:0 0 10px rgba(124,58,237,0.6);}
+
+  /* ── Roster (owned shadow types → summon buttons) ── */
+  #roster{position:fixed;bottom:118px;left:50%;transform:translateX(-50%);display:flex;gap:8px;z-index:10;pointer-events:all;}
+  .roster-btn{width:52px;height:60px;border:1px solid rgba(124,58,237,0.4);background:rgba(10,5,21,0.88);display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;transition:all 0.15s;touch-action:manipulation;}
+  .roster-btn:active,.roster-btn:hover{border-color:var(--mana-glow);box-shadow:0 0 12px rgba(124,58,237,0.5);background:rgba(45,27,105,0.6);}
+  .roster-btn.dmagno{border-color:#d97706;}
+  .roster-btn.dmagno:active,.roster-btn.dmagno:hover{border-color:#fbbf24;box-shadow:0 0 14px rgba(217,119,6,0.6);}
+  .roster-btn.disabled{opacity:0.3;pointer-events:none;}
+  .roster-cost{font-size:7px;font-family:'Cinzel',serif;color:var(--mana-glow);margin-top:2px;}
+  .roster-btn.dmagno .roster-cost{color:#fbbf24;}
+  .roster-count{font-size:7px;font-family:'Cinzel',serif;color:var(--text-dim);}
+
+  /* ── Ability buttons (Impair / Extract) ── */
+  #ability-bar{position:fixed;bottom:118px;right:16px;display:flex;flex-direction:column;gap:10px;z-index:10;pointer-events:all;}
+  .ability-btn{width:64px;height:64px;border-radius:50%;border:2px solid rgba(124,58,237,0.5);background:rgba(10,5,21,0.9);display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;transition:all 0.15s;touch-action:manipulation;}
+  .ability-btn .ic{font-size:20px;line-height:1;color:var(--mana-glow);}
+  .ability-btn .lb{font-size:6px;font-family:'Cinzel',serif;letter-spacing:1px;color:var(--text-dim);margin-top:2px;text-transform:uppercase;}
+  .ability-btn:active,.ability-btn:hover{border-color:var(--mana-glow);box-shadow:0 0 16px rgba(124,58,237,0.55);background:rgba(45,27,105,0.65);}
+  .ability-btn.disabled{opacity:0.3;pointer-events:none;}
+  .ability-btn.extract{border-color:rgba(196,181,253,0.6);}
+
+  /* ── Virtual joystick ── */
+  #joy-zone{position:fixed;left:0;bottom:0;width:46%;height:44%;z-index:10;touch-action:none;}
+  #joy-base{position:fixed;width:100px;height:100px;border-radius:50%;border:2px solid rgba(124,58,237,0.4);background:rgba(10,5,21,0.5);display:none;pointer-events:none;z-index:11;}
+  #joy-nub{position:fixed;width:42px;height:42px;border-radius:50%;background:rgba(124,58,237,0.55);border:1px solid rgba(196,181,253,0.7);box-shadow:0 0 12px rgba(124,58,237,0.6);display:none;pointer-events:none;z-index:12;}
+
+  /* ── Message log ── */
+  #msg-log{position:fixed;right:10px;bottom:190px;width:220px;max-height:110px;overflow:hidden;z-index:10;pointer-events:none;display:flex;flex-direction:column;justify-content:flex-end;gap:3px;}
+  .log-entry{font-size:10px;color:var(--text-dim);font-style:italic;text-align:right;animation:fadeMsg 0.3s ease;line-height:1.35;}
+  .log-entry.important{color:var(--gold-bright);font-style:normal;font-family:'Cinzel',serif;font-size:9px;letter-spacing:1px;}
+  @keyframes fadeMsg{from{opacity:0;transform:translateX(8px)}to{opacity:1;transform:translateX(0)}}
+
+  /* ── Screen hit-flash ── */
+  #hit-flash{position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:16;opacity:0;transition:opacity 0.08s;}
+
+  /* ── Rotate prompt ── */
+  #rotate-prompt{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(4,2,10,0.97);z-index:999;flex-direction:column;align-items:center;justify-content:center;gap:24px;pointer-events:all;}
+  #rotate-prompt.visible{display:flex;}
+  .rotate-icon{width:64px;height:64px;border:3px solid #a78bfa;border-radius:14px;position:relative;animation:rotateAnim 2s ease-in-out infinite;}
+  .rotate-icon::after{content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:28px;height:18px;border:2px solid #a78bfa;border-radius:3px;}
+  @keyframes rotateAnim{0%,100%{transform:rotate(0deg);}40%{transform:rotate(90deg);}60%{transform:rotate(90deg);}}
+  #rotate-title{font-family:'Cinzel',serif;font-size:16px;letter-spacing:3px;color:#a78bfa;text-transform:uppercase;}
+  #rotate-sub{font-family:'Crimson Text',serif;font-size:13px;color:#9ca3af;font-style:italic;text-align:center;padding:0 30px;}
+
+  /* ── Fullscreen button ── */
+  #fs-btn{position:fixed;top:8px;right:8px;width:36px;height:36px;background:rgba(10,5,21,0.88);border:1px solid rgba(92,33,182,0.55);color:#a78bfa;cursor:pointer;z-index:9999;display:flex;align-items:center;justify-content:center;font-size:16px;transition:all 0.2s;border-radius:4px;touch-action:manipulation;}
+  #fs-btn:hover,#fs-btn:active{border-color:#c4b5fd;color:#c4b5fd;background:rgba(45,27,105,0.7);box-shadow:0 0 14px rgba(124,58,237,0.5);}
+
+  /* ── Overlays ── */
+  #screen-overlay{position:fixed;top:0;left:0;right:0;bottom:0;z-index:20;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow-y:auto;background:rgba(4,2,10,0.94);backdrop-filter:blur(3px);pointer-events:all;padding:16px 0;}
+  #overlay-title{font-family:'UnifrakturMaguntia',cursive;font-size:50px;color:var(--mana-glow);text-shadow:0 0 40px var(--violet),0 0 90px rgba(92,33,182,0.35);margin-bottom:4px;letter-spacing:2px;line-height:1;}
+  #overlay-subtitle{font-family:'Cinzel',serif;font-size:10px;letter-spacing:4px;color:var(--bone-dim);margin-bottom:10px;text-transform:uppercase;}
+  #overlay-name{font-family:'Cinzel',serif;font-size:12px;letter-spacing:3px;color:var(--gold);margin-bottom:26px;}
+  #overlay-story{font-family:'Crimson Text',serif;font-size:13px;line-height:1.75;color:var(--text-dim);font-style:italic;max-width:500px;text-align:center;margin-bottom:26px;padding:0 20px;}
+  .overlay-btn{font-family:'Cinzel',serif;font-size:11px;letter-spacing:3px;padding:12px 34px;background:transparent;border:1px solid var(--violet);color:var(--mana-glow);cursor:pointer;text-transform:uppercase;transition:all 0.28s;margin:5px;touch-action:manipulation;}
+  .overlay-btn:hover,.overlay-btn:active{background:rgba(92,33,182,0.18);box-shadow:0 0 26px rgba(92,33,182,0.45);border-color:var(--mana-glow);}
+  .overlay-btn.primary{border-color:var(--gold);color:var(--gold-bright);}
+  .overlay-btn.primary:hover,.overlay-btn.primary:active{background:rgba(217,119,6,0.13);box-shadow:0 0 26px rgba(217,119,6,0.38);border-color:var(--gold-bright);}
+
+  #boss-intro{display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:25;flex-direction:column;align-items:center;justify-content:center;background:rgba(4,2,10,0.96);pointer-events:all;}
+  #boss-intro.visible{display:flex;}
+  #boss-intro-name{font-family:'UnifrakturMaguntia',cursive;font-size:44px;color:#fbbf24;text-shadow:0 0 40px #d97706,0 0 80px rgba(217,119,6,0.3);margin-bottom:6px;}
+  #boss-intro-title{font-family:'Cinzel',serif;font-size:11px;letter-spacing:4px;color:#78350f;text-transform:uppercase;margin-bottom:22px;}
+  #boss-intro-text{font-family:'Crimson Text',serif;font-size:13px;line-height:1.8;color:#9ca3af;font-style:italic;max-width:440px;text-align:center;margin-bottom:26px;padding:0 20px;}
+  #boss-intro-btn{font-family:'Cinzel',serif;font-size:11px;letter-spacing:3px;padding:10px 28px;background:transparent;border:1px solid #d97706;color:#fbbf24;cursor:pointer;touch-action:manipulation;}
+  #boss-intro-btn:hover,#boss-intro-btn:active{background:rgba(217,119,6,0.15);box-shadow:0 0 20px rgba(217,119,6,0.4);}
+
+  #loading-veil{position:fixed;inset:0;background:#04020a;z-index:998;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px;}
+  #loading-veil.hidden{display:none;}
+  #loading-title{font-family:'UnifrakturMaguntia',cursive;font-size:34px;color:#a78bfa;text-shadow:0 0 30px #5b21b6;}
+  #loading-bar-outer{width:200px;height:6px;background:rgba(255,255,255,0.08);}
+  #loading-bar-inner{height:100%;width:0%;background:linear-gradient(90deg,#5b21b6,#c4b5fd);transition:width 0.3s;}
+</style>
+</head>
+<body>
+
+<div id="loading-veil">
+  <div id="loading-title">Al Von Kan</div>
+  <div id="loading-bar-outer"><div id="loading-bar-inner"></div></div>
+</div>
+
+<canvas id="three-canvas"></canvas>
+<canvas id="fx-canvas"></canvas>
+
+<div id="hud">
+  <div class="stat-block">
+    <div class="bar-label">Al Von Kan — Vitality</div>
+    <div class="bar-outer"><div id="health-bar-inner" style="width:100%"></div></div>
+    <div class="bar-label">Mana Reserve</div>
+    <div class="bar-outer"><div id="mana-bar-inner" style="width:100%"></div></div>
+  </div>
+  <div id="wave-info">
+    <div id="wave-title">◈ Wave ◈</div>
+    <div id="wave-number">1</div>
+  </div>
+  <div class="stat-block stat-block-right">
+    <div class="bar-label" id="score-label" style="text-align:right">Shadows: 0</div>
+    <div class="bar-label" id="enemy-label" style="text-align:right">Enemies: 0</div>
+    <div class="bar-label" id="kills-hud" style="text-align:right;color:var(--gold)">Kills: 0</div>
+  </div>
+</div>
+
+<div id="boss-bar-wrap">
+  <div id="boss-name-label">Deimian Magno — Shadow Assassin</div>
+  <div id="boss-phase-label">Corporeal Phase</div>
+  <div id="boss-bar-outer"><div id="boss-bar-inner" style="width:100%"></div></div>
+</div>
+
+<div id="target-plate">
+  <div id="target-name">—</div>
+  <div id="target-hp-outer"><div id="target-hp-inner" style="width:100%"></div></div>
+  <div id="target-ring"></div>
+</div>
+
+<div id="roster"></div>
+
+<div id="aggro-bonus">⚔ AGGRO BONUS</div>
+<div id="boss-compass"><span id="boss-compass-arrow">▲</span></div>
+<div id="ability-bar">
+  <button class="ability-btn" id="btn-impair" onclick="G.doImpair()">
+    <span class="ic">⚡</span><span class="lb">Impair [Q]</span>
+  </button>
+  <button class="ability-btn extract" id="btn-extract" onclick="G.doExtract()">
+    <span class="ic">◈</span><span class="lb">Extract [E]</span>
+  </button>
+  <button class="ability-btn" id="btn-rally" onclick="G.doRally()">
+    <span id="rally-cd" class="ic">☽</span><span class="lb">Rally [R]</span>
+  </button>
+</div>
+
+<div id="joy-zone"></div>
+<div id="joy-base"></div>
+<div id="joy-nub"></div>
+
+<div id="msg-log"></div>
+<div id="hit-flash"></div>
+
+<div id="rotate-prompt">
+  <div class="rotate-icon"></div>
+  <div id="rotate-title">Rotate Your Device</div>
+  <div id="rotate-sub">Al Von Kan is best explored in landscape.<br>Turn your phone sideways to enter the shard world.</div>
+</div>
+
+<button id="fs-btn" onclick="toggleFullscreen()" title="Fullscreen">⛶</button>
+
+<div id="boss-intro">
+  <div id="boss-intro-name">Deimian Magno</div>
+  <div id="boss-intro-title">◈ The Shadow Assassin ◈</div>
+  <div id="boss-intro-text">
+    The ground trembles. The light bends. A figure steps from between two shadows —
+    not undead, not beast. A man who <em>chose</em> the shadow.<br><br>
+    He has hunted travellers between worlds for a hundred years, and he already knows your name.<br><br>
+    <strong style="color:#fbbf24;font-style:normal;">Watch his phase. Impair only while Corporeal.</strong>
+  </div>
+  <button id="boss-intro-btn" onclick="G.startBossFight()">⚔ Face Him</button>
+</div>
+
+<div id="screen-overlay">
+  <div id="overlay-title">Al Von Kan</div>
+  <div id="overlay-subtitle">Necro King — Shard World</div>
+  <div id="overlay-name">◈ An Isekai Chronicle ◈</div>
+  <div id="overlay-story">
+    A flash of light. The screech of tyres. Then nothing.<br><br>
+    When you opened your eyes you were standing on a small broken world — a shard adrift in the void,
+    its horizon curving away beneath your feet. Two moons hung in a sky that had never seen a sun.<br><br>
+    A voice spoke your new name from the dark: <strong style="color:#c4b5fd;font-style:normal;letter-spacing:2px;">Al Von Kan.</strong><br><br>
+    Your hands pulse cold. Somewhere on this drifting shard, <strong style="color:#fbbf24;font-style:normal;">Deimian Magno</strong> is already hunting you.
+  </div>
+  <button class="overlay-btn primary" onclick="G.startGame()">▶ Walk the Shard</button>
+</div>
+
+<script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
+<script>
+/* ══════════════════════════════════════════════════════════════
+   AL VON KAN: NECRO KING — SHARD WORLD (3D Edition)
+   A tiny-planet action-RPG. Same lore, mana economy, and
+   impair→extract→summon loop as the 2D original, rebuilt around
+   free 3D movement on a small explorable planet.
+   ══════════════════════════════════════════════════════════════ */
+
+// ══════════════════ AUDIO ENGINE (reused) ══════════════════
+const Audio = (() => {
+  let ctx = null;
+  let masterGain = null;
+  let musicGain = null;
+  let sfxGain = null;
+  let _started = false;
+
+  function init() {
+    if (_started) return;
+    _started = true;
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    masterGain = ctx.createGain(); masterGain.gain.value = 0.8; masterGain.connect(ctx.destination);
+    sfxGain = ctx.createGain(); sfxGain.gain.value = 1.0; sfxGain.connect(masterGain);
+    musicGain = ctx.createGain(); musicGain.gain.value = 0.18; musicGain.connect(masterGain);
+    startAmbience();
+    startMusic();
+  }
+
+  // ── Noise buffer (reusable) ──
+  let _noiseBuffer = null;
+  function getNoiseBuffer() {
+    if (_noiseBuffer) return _noiseBuffer;
+    const buf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+    _noiseBuffer = buf;
+    return buf;
+  }
+
+  // ── Tone helper ──
+  function tone(freq, type, dur, vol, delay=0, detune=0) {
+    if (!ctx) return;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = type;
+    osc.frequency.value = freq;
+    if (detune) osc.detune.value = detune;
+    gain.gain.setValueAtTime(0, ctx.currentTime + delay);
+    gain.gain.linearRampToValueAtTime(vol, ctx.currentTime + delay + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + dur);
+    osc.connect(gain); gain.connect(sfxGain);
+    osc.start(ctx.currentTime + delay);
+    osc.stop(ctx.currentTime + delay + dur + 0.05);
+  }
+
+  // ── Filtered noise burst ──
+  function noiseBurst(freq, dur, vol, delay=0) {
+    if (!ctx) return;
+    const src = ctx.createBufferSource();
+    src.buffer = getNoiseBuffer();
+    const filt = ctx.createBiquadFilter();
+    filt.type = 'bandpass'; filt.frequency.value = freq; filt.Q.value = 2;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(vol, ctx.currentTime + delay);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + dur);
+    src.connect(filt); filt.connect(gain); gain.connect(sfxGain);
+    src.start(ctx.currentTime + delay);
+    src.stop(ctx.currentTime + delay + dur + 0.05);
+  }
+
+  // ════ SFX ════════════════════════════════════════════════════
+
+  function sfxImpair() {
+    // Rising whoosh + low thud — "binding" feeling
+    tone(80, 'sine', 0.4, 0.4);
+    tone(160, 'sawtooth', 0.25, 0.2, 0.05);
+    tone(320, 'sine', 0.15, 0.15, 0.1);
+    tone(60, 'sine', 0.6, 0.5, 0.12);
+    noiseBurst(200, 0.3, 0.15, 0.05);
+  }
+
+  function sfxExtract() {
+    // Ascending shimmer — essence being pulled
+    const freqs = [200, 320, 480, 640, 960];
+    freqs.forEach((f, i) => tone(f, 'sine', 0.25-i*0.02, 0.3-i*0.04, i*0.04));
+    tone(1200, 'sine', 0.4, 0.2, 0.18);
+    noiseBurst(800, 0.2, 0.1, 0.15);
+  }
+
+  function sfxSummon() {
+    // Deep boom + harmonic rise — shadow manifesting
+    tone(55, 'sine', 0.8, 0.6);
+    tone(110, 'triangle', 0.5, 0.3, 0.05);
+    tone(220, 'sine', 0.4, 0.2, 0.15);
+    tone(330, 'sine', 0.3, 0.15, 0.25);
+    noiseBurst(120, 0.5, 0.25);
+  }
+
+  function sfxHit() {
+    // Sharp crack + low thud — taking damage
+    noiseBurst(180, 0.15, 0.5);
+    tone(60, 'sine', 0.3, 0.6, 0.02);
+    tone(40, 'sine', 0.4, 0.4, 0.05);
+  }
+
+  function sfxEnemyHit() {
+    // Lighter crack
+    noiseBurst(300, 0.1, 0.3);
+    tone(80, 'sine', 0.15, 0.3, 0.01);
+  }
+
+  function sfxKill() {
+    // Satisfying crunch + dissolve shimmer
+    noiseBurst(200, 0.2, 0.4);
+    tone(55, 'sine', 0.5, 0.5);
+    tone(440, 'sine', 0.15, 0.1, 0.1);
+    tone(880, 'sine', 0.1, 0.08, 0.15);
+  }
+
+  function sfxWaveClear() {
+    // Triumphant arpeggio
+    const notes = [261, 329, 392, 523, 659, 784];
+    notes.forEach((f, i) => tone(f, 'triangle', 0.4, 0.25-i*0.02, i*0.07));
+    tone(1046, 'sine', 0.6, 0.2, notes.length * 0.07);
+  }
+
+  function sfxBossPhase() {
+    // Whoosh + distortion — phase teleport
+    noiseBurst(80, 0.6, 0.5);
+    tone(40, 'sawtooth', 0.5, 0.4);
+    tone(120, 'sawtooth', 0.3, 0.3, 0.05);
+    tone(1200, 'sine', 0.2, 0.15, 0.1);
+  }
+
+  function sfxBossHit() {
+    // Heavier, amber-toned
+    noiseBurst(100, 0.25, 0.6);
+    tone(50, 'sine', 0.6, 0.7);
+    tone(70, 'sine', 0.4, 0.4, 0.05);
+  }
+
+  function sfxBossDefeated() {
+    // Dramatic collapse
+    noiseBurst(60, 1.2, 0.7);
+    tone(40, 'sine', 1.5, 0.8);
+    tone(30, 'sine', 2.0, 0.6, 0.1);
+    [220, 180, 140, 110, 80].forEach((f,i) => tone(f, 'sawtooth', 0.4, 0.3-i*0.04, i*0.12));
+  }
+
+  function sfxAbsorb() {
+    // Ascending ethereal + resonance
+    const freqs = [110, 165, 220, 330, 440, 660, 880, 1320];
+    freqs.forEach((f, i) => { tone(f, 'sine', 0.5, 0.25, i*0.08); tone(f*1.5, 'sine', 0.3, 0.1, i*0.08+0.04); });
+    noiseBurst(600, 0.8, 0.2, 0.3);
+  }
+
+  function sfxMove() {
+    // Subtle footstep — very quiet
+    noiseBurst(400, 0.04, 0.06);
+  }
+
+  function sfxManaRegen() {
+    // Tiny sparkle
+    tone(1200 + Math.random()*400, 'sine', 0.08, 0.04);
+  }
+
+  function sfxDeath() {
+    // Player death — resonant low collapse
+    noiseBurst(80, 1.0, 0.6);
+    tone(40, 'sine', 2.0, 0.8);
+    tone(30, 'sine', 3.0, 0.5, 0.2);
+    [330, 220, 165, 110, 82].forEach((f,i) => tone(f, 'sawtooth', 0.5, 0.2, i*0.15));
+  }
+
+  // ════ AMBIENCE — persistent low drone ════════════════════════
+  let _ambGain = null;
+  function startAmbience() {
+    // Dark wind drone — three detuned oscillators
+    const freqs = [36, 37.2, 38.6];
+    freqs.forEach(f => {
+      const osc = ctx.createOscillator();
+      const filt = ctx.createBiquadFilter();
+      filt.type = 'lowpass'; filt.frequency.value = 180;
+      _ambGain = ctx.createGain(); _ambGain.gain.value = 0.12;
+      osc.type = 'sine'; osc.frequency.value = f;
+      osc.connect(filt); filt.connect(_ambGain); _ambGain.connect(musicGain);
+      osc.start();
+    });
+    // Noise layer — cave wind
+    const ns = ctx.createBufferSource(); ns.buffer = getNoiseBuffer(); ns.loop = true;
+    const nf = ctx.createBiquadFilter(); nf.type = 'bandpass'; nf.frequency.value = 60; nf.Q.value = 0.3;
+    const ng = ctx.createGain(); ng.gain.value = 0.06;
+    ns.connect(nf); nf.connect(ng); ng.connect(musicGain);
+    ns.start();
+  }
+
+  // ════ MUSIC — generative melodic layer ═══════════════════════
+  let _musicActive = false;
+  let _musicTimeout = null;
+  const SCALE = [0, 2, 3, 5, 7, 8, 10]; // natural minor
+  const ROOT = 110; // A2
+
+  function startMusic() {
+    _musicActive = true;
+    scheduleMelody();
+  }
+
+  function scheduleMelody() {
+    if (!_musicActive || !ctx) return;
+    playMelodyNote();
+    const delay = 1200 + Math.random() * 2000;
+    _musicTimeout = setTimeout(scheduleMelody, delay);
+  }
+
+  function playMelodyNote() {
+    const degree = SCALE[Math.floor(Math.random() * SCALE.length)];
+    const octave = Math.random() < 0.3 ? 2 : 1;
+    const freq = ROOT * Math.pow(2, (degree + octave * 12) / 12);
+    const dur = 0.8 + Math.random() * 1.6;
+    const vol = 0.04 + Math.random() * 0.06;
+    const osc = ctx.createOscillator();
+    const filt = ctx.createBiquadFilter();
+    filt.type = 'lowpass'; filt.frequency.value = 800 + Math.random() * 400;
+    const gain = ctx.createGain();
+    osc.type = 'triangle'; osc.frequency.value = freq;
+    osc.detune.value = (Math.random() - 0.5) * 8;
+    gain.gain.setValueAtTime(0, ctx.currentTime);
+    gain.gain.linearRampToValueAtTime(vol, ctx.currentTime + 0.08);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
+    osc.connect(filt); filt.connect(gain); gain.connect(musicGain);
+    osc.start(); osc.stop(ctx.currentTime + dur + 0.1);
+
+    // Occasional low harmony note
+    if (Math.random() < 0.35) {
+      const hFreq = freq * (Math.random() < 0.5 ? 0.5 : 0.75);
+      tone(hFreq, 'sine', dur * 0.8, vol * 0.5);
+    }
+  }
+
+  // Boss music intensifier
+  let _bossOscs = [];
+  function startBossMusic() {
+    musicGain.gain.linearRampToValueAtTime(0.32, ctx.currentTime + 1.0);
+    if (_musicTimeout) clearTimeout(_musicTimeout);
+    // Persistent tension pulse
+    const pulseFreqs = [55, 73.4, 82.4]; // power chord
+    pulseFreqs.forEach(f => {
+      const osc = ctx.createOscillator();
+      const lfo = ctx.createOscillator();
+      const lfoGain = ctx.createGain();
+      const gain = ctx.createGain();
+      osc.type = 'sawtooth'; osc.frequency.value = f;
+      lfo.type = 'sine'; lfo.frequency.value = 0.5 + Math.random() * 0.3;
+      lfoGain.gain.value = 0.04;
+      gain.gain.value = 0.04;
+      lfo.connect(lfoGain); lfoGain.connect(gain.gain);
+      osc.connect(gain); gain.connect(musicGain);
+      osc.start(); lfo.start();
+      _bossOscs.push(osc, lfo);
+    });
+  }
+
+  function stopBossMusic() {
+    musicGain.gain.linearRampToValueAtTime(0.18, ctx.currentTime + 2.0);
+    _bossOscs.forEach(o => { try { o.stop(ctx.currentTime + 2); } catch(e){} });
+    _bossOscs = [];
+    scheduleMelody();
+  }
+
+  return {
+    init,
+    sfxImpair, sfxExtract, sfxSummon, sfxHit, sfxEnemyHit, sfxKill,
+    sfxWaveClear, sfxBossPhase, sfxBossHit, sfxBossDefeated, sfxAbsorb,
+    sfxMove, sfxManaRegen, sfxDeath, startBossMusic, stopBossMusic
+  };
+})();
+
+
+// ══════════════════ SPRITE ART (reused) ══════════════════
+const S = {
+
+  // ╔══════════════════════════════════════╗
+  // ║  AL VON KAN (Player Character)       ║
+  // ║  Normal young man with dark clothes  ║
+  // ║  Mana channels glow at hands & eyes  ║
+  // ╚══════════════════════════════════════╝
+  alVonKan(ctx, x, y, t, state) {
+    // state: 'idle' | 'walk' | 'cast'
+    const bob = Math.sin(t * 0.07) * 1.8;
+    const casting = state === 'cast';
+    const walk = state === 'walk';
+
+    ctx.save();
+
+    // --- Mana aura when casting ---
+    if (casting) {
+      const aura = ctx.createRadialGradient(x, y - 45, 5, x, y - 45, 40);
+      aura.addColorStop(0, 'rgba(124,58,237,0.35)');
+      aura.addColorStop(1, 'rgba(124,58,237,0)');
+      ctx.fillStyle = aura;
+      ctx.beginPath(); ctx.ellipse(x, y - 45, 40, 50, 0, 0, Math.PI*2); ctx.fill();
+    }
+
+    // --- Legs ---
+    // Upper legs pivot at hip
+    const hipY = y - 26 + bob;
+    const legSwing = walk ? Math.sin(t * 0.13) * 0.32 : 0;
+    // Left thigh
+    ctx.save(); ctx.translate(x - 6, hipY); ctx.rotate(legSwing);
+    ctx.fillStyle = '#1c1830'; ctx.fillRect(-5, 0, 10, 20); ctx.restore();
+    // Right thigh
+    ctx.save(); ctx.translate(x + 6, hipY); ctx.rotate(-legSwing);
+    ctx.fillStyle = '#1c1830'; ctx.fillRect(-5, 0, 10, 20); ctx.restore();
+    // Left shin
+    const shinL = walk ? Math.max(0, Math.sin(t * 0.13 + 0.3)) * 0.25 : 0;
+    ctx.save(); ctx.translate(x - 6 + Math.sin(legSwing)*20, hipY + 19); ctx.rotate(legSwing + shinL);
+    ctx.fillStyle = '#141025'; ctx.fillRect(-4, 0, 8, 18); ctx.restore();
+    // Right shin
+    const shinR = walk ? Math.max(0, Math.sin(t * 0.13 + Math.PI + 0.3)) * 0.25 : 0;
+    ctx.save(); ctx.translate(x + 6 + Math.sin(-legSwing)*20, hipY + 19); ctx.rotate(-legSwing - shinR);
+    ctx.fillStyle = '#141025'; ctx.fillRect(-4, 0, 8, 18); ctx.restore();
+    // Boots
+    ctx.fillStyle = '#0d0a18';
+    ctx.fillRect(x - 14 + Math.sin(legSwing)*16, y - 6 + bob, 12, 7);
+    ctx.fillRect(x + 2 + Math.sin(-legSwing)*16, y - 6 + bob, 12, 7);
+    // Boot highlight
+    ctx.fillStyle = '#1a1530';
+    ctx.fillRect(x - 13 + Math.sin(legSwing)*16, y - 6 + bob, 10, 3);
+    ctx.fillRect(x + 3 + Math.sin(-legSwing)*16, y - 6 + bob, 10, 3);
+
+    // --- Torso & coat ---
+    // Coat body
+    ctx.fillStyle = '#1a1530';
+    ctx.fillRect(x - 14, y - 52 + bob, 28, 28);
+    // Inner shirt
+    ctx.fillStyle = '#0d0820';
+    ctx.fillRect(x - 6, y - 50 + bob, 12, 22);
+    // Coat lapels
+    ctx.fillStyle = '#251a40';
+    ctx.fillRect(x - 14, y - 52 + bob, 8, 18);
+    ctx.fillRect(x + 6, y - 52 + bob, 8, 18);
+    // Belt
+    ctx.fillStyle = '#3d2a10';
+    ctx.fillRect(x - 13, y - 28 + bob, 26, 5);
+    ctx.fillStyle = '#d97706';
+    ctx.fillRect(x - 3, y - 28 + bob, 6, 5);
+    // Coat trim (collar)
+    ctx.fillStyle = '#2d1b50';
+    ctx.fillRect(x - 15, y - 54 + bob, 30, 6);
+
+    // --- Arms ---
+    const castL = casting ? -0.7 - Math.sin(t*0.15)*0.15 : 0;
+    const castR = casting ?  0.6 + Math.sin(t*0.15)*0.12 : 0;
+    const armSwingL = walk ? Math.sin(t * 0.13 + Math.PI) * 0.28 : 0;
+    const armSwingR = walk ? Math.sin(t * 0.13) * 0.28 : 0;
+
+    // Left upper arm
+    ctx.save(); ctx.translate(x - 14, y - 50 + bob); ctx.rotate(-0.15 + armSwingL + castL);
+    ctx.fillStyle = '#1a1530'; ctx.fillRect(-5, 0, 10, 20); ctx.restore();
+    // Left forearm
+    const faOffLX = x - 14 + Math.sin(-0.15 + armSwingL + castL)*18;
+    const faOffLY = y - 50 + bob + Math.cos(-0.15 + armSwingL + castL)*18;
+    ctx.save(); ctx.translate(faOffLX, faOffLY); ctx.rotate(-0.1 + armSwingL*0.5 + castL*0.8);
+    ctx.fillStyle = '#251a40'; ctx.fillRect(-4, 0, 8, 16); ctx.restore();
+
+    // Right upper arm
+    ctx.save(); ctx.translate(x + 14, y - 50 + bob); ctx.rotate(0.15 + armSwingR + castR);
+    ctx.fillStyle = '#1a1530'; ctx.fillRect(-5, 0, 10, 20); ctx.restore();
+    // Right forearm
+    const faOffRX = x + 14 + Math.sin(0.15 + armSwingR + castR)*18;
+    const faOffRY = y - 50 + bob + Math.cos(0.15 + armSwingR + castR)*18;
+    ctx.save(); ctx.translate(faOffRX, faOffRY); ctx.rotate(0.1 + armSwingR*0.5 + castR*0.8);
+    ctx.fillStyle = '#251a40'; ctx.fillRect(-4, 0, 8, 16); ctx.restore();
+
+    // Hands — mana glow
+    const handLX = faOffLX + Math.sin(-0.1+armSwingL*0.5+castL*0.8)*14;
+    const handLY = faOffLY + Math.cos(-0.1+armSwingL*0.5+castL*0.8)*14;
+    const handRX = faOffRX + Math.sin(0.1+armSwingR*0.5+castR*0.8)*14;
+    const handRY = faOffRY + Math.cos(0.1+armSwingR*0.5+castR*0.8)*14;
+    const handColor = casting ? '#c4b5fd' : '#c4a882';
+    const glowCol = casting ? '#7c3aed' : 'transparent';
+    ctx.shadowColor = glowCol; ctx.shadowBlur = casting ? 16 : 0;
+    ctx.fillStyle = handColor;
+    ctx.beginPath(); ctx.ellipse(handLX, handLY, 5, 5, 0, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(handRX, handRY, 5, 5, 0, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // Casting mana orbs at hands
+    if (casting) {
+      const pulse = 0.6 + Math.sin(t*0.2)*0.4;
+      ctx.save();
+      ctx.globalAlpha = pulse;
+      const orbGrad = ctx.createRadialGradient(handRX, handRY, 0, handRX, handRY, 10);
+      orbGrad.addColorStop(0,'#e9d5ff'); orbGrad.addColorStop(0.5,'#7c3aed'); orbGrad.addColorStop(1,'rgba(124,58,237,0)');
+      ctx.fillStyle = orbGrad;
+      ctx.beginPath(); ctx.arc(handRX, handRY, 10, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+      // Mana stream particles (just visual trails)
+      for (let i = 0; i < 4; i++) {
+        const ang = (t * 0.18 + i * 1.57);
+        const px = handRX + Math.cos(ang) * (8 + i*3);
+        const py = handRY + Math.sin(ang) * (8 + i*3);
+        ctx.globalAlpha = 0.5 - i*0.1;
+        ctx.fillStyle = '#c4b5fd';
+        ctx.fillRect(px-2, py-2, 4, 4);
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // --- Neck ---
+    ctx.fillStyle = '#c4a882';
+    ctx.fillRect(x - 4, y - 56 + bob, 8, 8);
+
+    // --- Head ---
+    // Base head shape
+    ctx.fillStyle = '#c4a882';
+    ctx.beginPath();
+    ctx.ellipse(x, y - 68 + bob, 13, 14, 0, 0, Math.PI*2);
+    ctx.fill();
+    // Jaw / lower face
+    ctx.fillStyle = '#b89870';
+    ctx.fillRect(x - 9, y - 62 + bob, 18, 8);
+    ctx.beginPath(); ctx.ellipse(x, y - 58 + bob, 9, 5, 0, 0, Math.PI*2); ctx.fill();
+
+    // Hair — dark, somewhat tousled
+    ctx.fillStyle = '#1a1008';
+    // Main hair mass
+    ctx.beginPath(); ctx.ellipse(x, y - 76 + bob, 14, 8, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillRect(x - 13, y - 76 + bob, 26, 12);
+    // Side tufts
+    ctx.fillRect(x - 15, y - 72 + bob, 5, 12);
+    ctx.fillRect(x + 10, y - 72 + bob, 5, 12);
+    // Fringe strands over forehead
+    ctx.fillStyle = '#0d0a08';
+    ctx.fillRect(x - 8, y - 66 + bob, 4, 6);
+    ctx.fillRect(x - 2, y - 67 + bob, 4, 5);
+    ctx.fillRect(x + 4, y - 65 + bob, 3, 4);
+
+    // Eyes — sharp, determined
+    const eyeGlow = casting ? '#c4b5fd' : '#2563eb';
+    ctx.fillStyle = '#0d0820';
+    ctx.fillRect(x - 8, y - 70 + bob, 6, 5);
+    ctx.fillRect(x + 2, y - 70 + bob, 6, 5);
+    ctx.fillStyle = eyeGlow;
+    ctx.shadowColor = casting ? '#7c3aed' : 'transparent';
+    ctx.shadowBlur = casting ? 10 : 0;
+    ctx.fillRect(x - 7, y - 69 + bob, 4, 3);
+    ctx.fillRect(x + 3, y - 69 + bob, 4, 3);
+    ctx.shadowBlur = 0;
+    // Highlight
+    ctx.fillStyle = '#e2e8f0';
+    ctx.fillRect(x - 6, y - 69 + bob, 1, 1);
+    ctx.fillRect(x + 4, y - 69 + bob, 1, 1);
+    // Brow
+    ctx.fillStyle = '#1a1008';
+    ctx.fillRect(x - 9, y - 72 + bob, 7, 2);
+    ctx.fillRect(x + 2, y - 72 + bob, 7, 2);
+    // Mouth
+    ctx.fillStyle = '#8b6a4a';
+    ctx.fillRect(x - 3, y - 61 + bob, 6, 2);
+
+    // Name tag (very subtle, only on idle)
+    if (state === 'idle') {
+      ctx.save();
+      ctx.globalAlpha = 0.35;
+      ctx.fillStyle = '#c4b5fd';
+      ctx.font = '7px Cinzel, serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Al Von Kan', x, y - 86 + bob);
+      ctx.restore();
+    }
+
+    ctx.restore();
+  },
+
+  // ── Al Von Kan back-facing view ─────────────────────────────
+  // Drawn when player is moving away from the camera. Shows the
+  // back of his jacket, hair, and arms — same pixel-art style.
+  alVonKanBack(ctx, x, y, t, state) {
+    const bob = Math.sin(t * 0.07) * 1.8;
+    const walk = state === 'walk';
+    const casting = state === 'cast';
+    ctx.save();
+
+    if (casting) {
+      const aura = ctx.createRadialGradient(x, y - 45, 5, x, y - 45, 40);
+      aura.addColorStop(0, 'rgba(124,58,237,0.35)'); aura.addColorStop(1, 'rgba(124,58,237,0)');
+      ctx.fillStyle = aura;
+      ctx.beginPath(); ctx.ellipse(x, y - 45, 40, 50, 0, 0, Math.PI*2); ctx.fill();
+    }
+
+    const legSwing = walk ? Math.sin(t * 0.13) * 0.32 : 0;
+    // Legs
+    ctx.save(); ctx.translate(x - 6, y - 26 + bob); ctx.rotate(legSwing);
+    ctx.fillStyle = '#1c1830'; ctx.fillRect(-5, 0, 10, 20);
+    ctx.restore();
+    ctx.save(); ctx.translate(x + 6, y - 26 + bob); ctx.rotate(-legSwing);
+    ctx.fillStyle = '#1c1830'; ctx.fillRect(-5, 0, 10, 20);
+    ctx.restore();
+    // Shins
+    const shinL = walk ? Math.max(0, Math.sin(t * 0.13 + 0.3)) * 0.25 : 0;
+    const shinR = walk ? Math.max(0, Math.sin(t * 0.13 + Math.PI + 0.3)) * 0.25 : 0;
+    ctx.save(); ctx.translate(x - 6 + Math.sin(legSwing)*20, y - 7 + bob); ctx.rotate(legSwing + shinL);
+    ctx.fillStyle = '#141025'; ctx.fillRect(-4, 0, 8, 18); ctx.restore();
+    ctx.save(); ctx.translate(x + 6 + Math.sin(-legSwing)*20, y - 7 + bob); ctx.rotate(-legSwing - shinR);
+    ctx.fillStyle = '#141025'; ctx.fillRect(-4, 0, 8, 18); ctx.restore();
+    // Boots
+    ctx.fillStyle = '#0d0a18';
+    ctx.fillRect(x - 14 + Math.sin(legSwing)*16, y + 6 + bob, 12, 7);
+    ctx.fillRect(x + 2 + Math.sin(-legSwing)*16, y + 6 + bob, 12, 7);
+
+    // Jacket back — slightly different from front (no lapels, shows back seam)
+    ctx.fillStyle = '#1a1530'; ctx.fillRect(x - 14, y - 52 + bob, 28, 28);
+    // Back seam stripe
+    ctx.fillStyle = '#0d0820'; ctx.fillRect(x - 2, y - 52 + bob, 4, 26);
+    // Jacket collar back
+    ctx.fillStyle = '#2d1b50'; ctx.fillRect(x - 12, y - 54 + bob, 24, 6);
+    // Belt
+    ctx.fillStyle = '#3d2a10'; ctx.fillRect(x - 13, y - 28 + bob, 26, 5);
+    ctx.fillStyle = '#d97706'; ctx.fillRect(x - 3, y - 28 + bob, 6, 5);
+
+    // Arms (back view — slightly wider/visible)
+    const armSwingL = walk ? Math.sin(t * 0.13 + Math.PI) * 0.28 : 0;
+    const armSwingR = walk ? Math.sin(t * 0.13) * 0.28 : 0;
+    ctx.save(); ctx.translate(x - 14, y - 50 + bob); ctx.rotate(-0.1 + armSwingL);
+    ctx.fillStyle = '#1a1530'; ctx.fillRect(-5, 0, 10, 20);
+    ctx.restore();
+    ctx.save(); ctx.translate(x + 14, y - 50 + bob); ctx.rotate(0.1 + armSwingR);
+    ctx.fillStyle = '#1a1530'; ctx.fillRect(-5, 0, 10, 20);
+    ctx.restore();
+    // Hands glow (visible from behind when casting)
+    if (casting) {
+      ctx.fillStyle = '#c4b5fd';
+      ctx.shadowColor = '#7c3aed'; ctx.shadowBlur = 14;
+      ctx.fillRect(x - 20, y - 32 + bob, 6, 6);
+      ctx.fillRect(x + 14, y - 32 + bob, 6, 6);
+      ctx.shadowBlur = 0;
+    }
+
+    // Neck
+    ctx.fillStyle = '#2a1a3a'; ctx.fillRect(x - 4, y - 56 + bob, 8, 6);
+
+    // Head — back of head, hair only, no face
+    ctx.fillStyle = '#c4a882';
+    ctx.beginPath(); ctx.ellipse(x, y - 68 + bob, 13, 14, 0, 0, Math.PI*2); ctx.fill();
+    // Hair covering entire head back
+    ctx.fillStyle = '#1a1008';
+    ctx.beginPath(); ctx.ellipse(x, y - 68 + bob, 13, 14, 0, 0, Math.PI*2); ctx.fill();
+    // Hair texture — lighter streaks
+    ctx.fillStyle = '#2d1a0e';
+    ctx.fillRect(x - 5, y - 76 + bob, 3, 14);
+    ctx.fillRect(x - 1, y - 78 + bob, 3, 16);
+    ctx.fillRect(x + 3, y - 76 + bob, 3, 14);
+    // Collar visible above jacket
+    ctx.fillStyle = '#1a1530'; ctx.fillRect(x - 6, y - 58 + bob, 12, 5);
+
+    ctx.restore();
+  },
+
+  // ╔══════════════════════════════════════╗
+  // ║  SKELETON WARRIOR                    ║
+  // ║  Tall, ancient, armed with a blade   ║
+  // ║  Detailed bone anatomy               ║
+  // ╚══════════════════════════════════════╝
+  skeleton(ctx, x, y, t, hp, maxHp, impaired) {
+    ctx.save();
+    if (impaired) { ctx.globalAlpha = 0.75; ctx.shadowColor = '#7c3aed'; ctx.shadowBlur = 18; }
+
+    const bob = impaired ? 0 : Math.sin(t * 0.07) * 2;
+    const walkSwing = impaired ? 0 : Math.sin(t * 0.11);
+    const bc = impaired ? '#9d8ec0' : '#d4c5a9';   // bone color
+    const bd = impaired ? '#6b5890' : '#8b7d6b';   // bone dark
+    const bs = impaired ? '#4a3570' : '#5a4d3d';   // bone shadow
+    const eyeCol = impaired ? '#7c3aed' : '#1a0515';
+    const eyeGlow = impaired ? '#c4b5fd' : null;
+
+    // --- Pelvis / waist ---
+    ctx.fillStyle = bd;
+    ctx.beginPath(); ctx.ellipse(x, y - 24 + bob, 11, 7, 0, 0, Math.PI*2); ctx.fill();
+    // Pelvis detail
+    ctx.fillStyle = bs;
+    ctx.fillRect(x - 8, y - 26 + bob, 4, 6);
+    ctx.fillRect(x + 4, y - 26 + bob, 4, 6);
+
+    // --- Legs ---
+    const legAng = walkSwing * 0.35;
+    // LEFT upper leg (femur)
+    ctx.save(); ctx.translate(x - 7, y - 24 + bob); ctx.rotate(-legAng);
+    ctx.fillStyle = bc;
+    // femur shaft
+    ctx.fillRect(-4, 0, 8, 22);
+    // knee joint
+    ctx.beginPath(); ctx.ellipse(0, 23, 6, 5, 0, 0, Math.PI*2); ctx.fillStyle = bd; ctx.fill();
+    // lower leg (tibia)
+    ctx.fillStyle = bc; ctx.fillRect(-3, 23, 6, 20);
+    // ankle
+    ctx.fillStyle = bd; ctx.beginPath(); ctx.ellipse(0, 44, 4, 3, 0, 0, Math.PI*2); ctx.fill();
+    // foot
+    ctx.fillStyle = bc; ctx.fillRect(-4, 44, 14, 5);
+    ctx.restore();
+
+    // RIGHT upper leg
+    ctx.save(); ctx.translate(x + 7, y - 24 + bob); ctx.rotate(legAng);
+    ctx.fillStyle = bc; ctx.fillRect(-4, 0, 8, 22);
+    ctx.fillStyle = bd; ctx.beginPath(); ctx.ellipse(0, 23, 6, 5, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = bc; ctx.fillRect(-3, 23, 6, 20);
+    ctx.fillStyle = bd; ctx.beginPath(); ctx.ellipse(0, 44, 4, 3, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = bc; ctx.fillRect(-10, 44, 14, 5);
+    ctx.restore();
+
+    // --- Ribcage ---
+    // Spine
+    ctx.fillStyle = bd;
+    ctx.fillRect(x - 3, y - 62 + bob, 6, 38);
+    // Rib pairs (6 pairs, slightly curved via multiple rects)
+    const ribColors = [bc, bd];
+    for (let r = 0; r < 6; r++) {
+      const ry = y - 58 + r * 5.5 + bob;
+      const rw = 14 - r * 0.8;
+      ctx.fillStyle = r % 2 === 0 ? bc : bd;
+      // Left rib arc (3 segments)
+      ctx.fillRect(x - rw - 2, ry, rw, 3);
+      ctx.fillRect(x - rw - 4, ry + 2, rw * 0.7, 2);
+      // Right rib arc
+      ctx.fillRect(x + 2, ry, rw, 3);
+      ctx.fillRect(x + rw * 0.3 + 4, ry + 2, rw * 0.7, 2);
+    }
+    // Sternum
+    ctx.fillStyle = bd;
+    ctx.fillRect(x - 2, y - 58 + bob, 4, 30);
+    // Clavicles
+    ctx.fillStyle = bc;
+    ctx.save(); ctx.translate(x, y - 58 + bob); ctx.rotate(-0.2);
+    ctx.fillRect(-18, 0, 18, 4); ctx.restore();
+    ctx.save(); ctx.translate(x, y - 58 + bob); ctx.rotate(0.2);
+    ctx.fillRect(0, 0, 18, 4); ctx.restore();
+
+    // --- Sword arm (right) ---
+    const swordSwing = impaired ? 0.1 : 0.1 + Math.sin(t * 0.08) * 0.12;
+    ctx.save(); ctx.translate(x + 12, y - 58 + bob); ctx.rotate(swordSwing + 0.2);
+    ctx.fillStyle = bc; ctx.fillRect(-4, 0, 8, 18); // upper arm
+    ctx.fillStyle = bd; ctx.beginPath(); ctx.ellipse(0, 19, 5, 4, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = bc; ctx.fillRect(-3, 19, 6, 16); // forearm
+    // Hand/fist
+    ctx.fillStyle = bd; ctx.beginPath(); ctx.ellipse(0, 36, 5, 5, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = bc; ctx.fillRect(-2, 36, 4, 4); // finger bones
+    // Sword
+    ctx.fillStyle = '#8a9aaa'; ctx.fillRect(-2, 40, 4, 32); // blade
+    ctx.fillStyle = '#c0c8d0'; ctx.fillRect(-1, 40, 2, 30); // edge highlight
+    ctx.fillStyle = '#b8860b'; ctx.fillRect(-6, 38, 12, 4); // guard
+    ctx.fillStyle = '#5a4030'; ctx.fillRect(-2, 34, 4, 8); // handle
+    ctx.restore();
+
+    // --- Shield arm (left) ---
+    const shieldSwing = impaired ? -0.1 : -0.1 + Math.sin(t * 0.08 + Math.PI) * 0.1;
+    ctx.save(); ctx.translate(x - 12, y - 58 + bob); ctx.rotate(shieldSwing - 0.15);
+    ctx.fillStyle = bc; ctx.fillRect(-4, 0, 8, 18);
+    ctx.fillStyle = bd; ctx.beginPath(); ctx.ellipse(0, 19, 5, 4, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = bc; ctx.fillRect(-3, 19, 6, 16);
+    // Shield
+    ctx.fillStyle = '#3d2810'; ctx.fillRect(-14, 14, 16, 22);
+    ctx.fillStyle = '#6b3d15'; ctx.fillRect(-13, 15, 14, 20);
+    ctx.fillStyle = '#b8860b'; ctx.fillRect(-13, 15, 1, 20); ctx.fillRect(-5, 14, 1, 22);
+    ctx.fillStyle = '#c0a060'; ctx.beginPath(); ctx.arc(-6, 25, 4, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+
+    // --- Skull ---
+    // Skull base
+    ctx.fillStyle = bc;
+    ctx.beginPath(); ctx.ellipse(x, y - 73 + bob, 13, 14, 0, 0, Math.PI*2); ctx.fill();
+    // Cheekbones
+    ctx.fillStyle = bd;
+    ctx.fillRect(x - 14, y - 74 + bob, 4, 8);
+    ctx.fillRect(x + 10, y - 74 + bob, 4, 8);
+    // Zygomatic arch
+    ctx.fillStyle = bc;
+    ctx.fillRect(x - 13, y - 72 + bob, 12, 3);
+    ctx.fillRect(x + 1, y - 72 + bob, 12, 3);
+    // Nasal cavity
+    ctx.fillStyle = bs;
+    ctx.fillRect(x - 3, y - 72 + bob, 6, 5);
+    // Eye sockets (deep set)
+    ctx.fillStyle = '#000';
+    ctx.beginPath(); ctx.ellipse(x - 6, y - 76 + bob, 5, 5, 0, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(x + 6, y - 76 + bob, 5, 5, 0, 0, Math.PI*2); ctx.fill();
+    // Eye glow
+    if (eyeGlow) {
+      ctx.shadowColor = eyeGlow; ctx.shadowBlur = 14;
+    }
+    ctx.fillStyle = eyeCol;
+    ctx.beginPath(); ctx.ellipse(x - 6, y - 76 + bob, 3, 3, 0, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(x + 6, y - 76 + bob, 3, 3, 0, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+    // Forehead sutures
+    ctx.fillStyle = bd;
+    ctx.fillRect(x - 5, y - 84 + bob, 10, 1);
+    ctx.fillRect(x - 8, y - 80 + bob, 16, 1);
+    // Upper jaw (maxilla)
+    ctx.fillStyle = bc;
+    ctx.fillRect(x - 9, y - 64 + bob, 18, 7);
+    // Teeth row (top)
+    ctx.fillStyle = '#f0e8d8';
+    for (let i = 0; i < 6; i++) ctx.fillRect(x - 8 + i*3, y - 64 + bob, 2, 5);
+    // Lower jaw (mandible) — slightly open
+    ctx.fillStyle = bd;
+    ctx.fillRect(x - 8, y - 59 + bob, 16, 5);
+    // Bottom teeth
+    ctx.fillStyle = '#e8dfc8';
+    for (let i = 0; i < 5; i++) ctx.fillRect(x - 7 + i*3, y - 59 + bob, 2, 4);
+
+    ctx.restore();
+
+    // HP bar
+    if (hp < maxHp) {
+      const bw = 48, bh = 5;
+      ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(x-24, y-96, bw, bh);
+      const pct = hp/maxHp;
+      ctx.fillStyle = pct > 0.5 ? '#16a34a' : pct > 0.25 ? '#d97706' : '#dc2626';
+      ctx.fillRect(x-24, y-96, bw*pct, bh);
+      ctx.strokeStyle = 'rgba(255,255,255,0.1)'; ctx.lineWidth = 0.5;
+      ctx.strokeRect(x-24, y-96, bw, bh);
+    }
+  },
+
+  // ╔══════════════════════════════════════╗
+  // ║  GOBLIN RAIDER                       ║
+  // ║  Hunched, feral, tribal war-paint    ║
+  // ║  Daggers in both hands               ║
+  // ╚══════════════════════════════════════╝
+  goblin(ctx, x, y, t, hp, maxHp, impaired) {
+    ctx.save();
+    if (impaired) { ctx.globalAlpha = 0.75; ctx.shadowColor = '#7c3aed'; ctx.shadowBlur = 16; }
+
+    const bob = impaired ? 0 : Math.sin(t * 0.09) * 2.5;
+    const walk = Math.sin(t * 0.13);
+    const gc  = impaired ? '#7faa60' : '#4a7c3a'; // green
+    const gcl = impaired ? '#9fcb80' : '#6aaa5a'; // light green
+    const gcd = impaired ? '#4a6b30' : '#2d5420'; // dark green
+    const gsk = impaired ? '#3a7050' : '#1e5a30'; // skin dark
+    const eye = impaired ? '#7c3aed' : '#ffcc00';
+
+    // --- Legs (bent/crouching) ---
+    const legSwing = walk * 0.28;
+    // Left leg
+    ctx.save(); ctx.translate(x - 5, y - 20 + bob); ctx.rotate(-legSwing - 0.2);
+    ctx.fillStyle = gc; ctx.fillRect(-4, 0, 8, 14);
+    ctx.fillStyle = gcd; ctx.beginPath(); ctx.ellipse(0, 15, 5, 4, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = gc; ctx.fillRect(-3, 15, 6, 12);
+    // Big goblin foot
+    ctx.fillStyle = gcd; ctx.fillRect(-5, 27, 14, 6); ctx.restore();
+
+    // Right leg
+    ctx.save(); ctx.translate(x + 5, y - 20 + bob); ctx.rotate(legSwing + 0.2);
+    ctx.fillStyle = gc; ctx.fillRect(-4, 0, 8, 14);
+    ctx.fillStyle = gcd; ctx.beginPath(); ctx.ellipse(0, 15, 5, 4, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = gc; ctx.fillRect(-3, 15, 6, 12);
+    ctx.fillStyle = gcd; ctx.fillRect(-9, 27, 14, 6); ctx.restore();
+
+    // --- Loincloth ---
+    ctx.fillStyle = '#5a3010';
+    ctx.fillRect(x - 8, y - 22 + bob, 16, 6);
+    ctx.fillStyle = '#3d2008';
+    ctx.fillRect(x - 4, y - 18 + bob, 3, 8); ctx.fillRect(x + 1, y - 18 + bob, 3, 8);
+
+    // --- Body (hunched torso) ---
+    ctx.fillStyle = gc;
+    ctx.save(); ctx.translate(x, y - 22 + bob); ctx.rotate(-0.12); // hunched
+    ctx.fillRect(-12, -22, 24, 24);
+    ctx.restore();
+    // Belly (slightly round)
+    ctx.fillStyle = gcl;
+    ctx.beginPath(); ctx.ellipse(x, y - 30 + bob, 9, 10, -0.1, 0, Math.PI*2); ctx.fill();
+    // War-paint stripes on chest
+    ctx.fillStyle = '#c8381a';
+    ctx.fillRect(x - 10, y - 40 + bob, 4, 2);
+    ctx.fillRect(x - 10, y - 36 + bob, 4, 2);
+    ctx.fillStyle = '#f59e0b';
+    ctx.fillRect(x + 6, y - 40 + bob, 4, 2);
+    // Shoulder pads (crude bone armor)
+    ctx.fillStyle = '#d4c5a9';
+    ctx.beginPath(); ctx.ellipse(x - 13, y - 40 + bob, 7, 5, -0.3, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(x + 13, y - 40 + bob, 7, 5, 0.3, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#8b7d6b';
+    ctx.fillRect(x - 17, y - 43 + bob, 3, 2); ctx.fillRect(x - 14, y - 43 + bob, 3, 2);
+    ctx.fillRect(x + 11, y - 43 + bob, 3, 2); ctx.fillRect(x + 14, y - 43 + bob, 3, 2);
+
+    // --- Arms (long, gangly) ---
+    const armSwL = walk * 0.3;
+    const armSwR = -walk * 0.3;
+    // Left upper arm
+    ctx.save(); ctx.translate(x - 13, y - 42 + bob); ctx.rotate(-0.3 + armSwL);
+    ctx.fillStyle = gc; ctx.fillRect(-4, 0, 8, 16);
+    ctx.fillStyle = gcd; ctx.beginPath(); ctx.ellipse(0, 17, 4, 3.5, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = gsk; ctx.fillRect(-3, 17, 6, 14); // forearm
+    // Dagger
+    ctx.fillStyle = '#606870'; ctx.fillRect(-1, 30, 3, 16);
+    ctx.fillStyle = '#9ab0c0'; ctx.fillRect(0, 30, 1, 14);
+    ctx.fillStyle = '#8b5e20'; ctx.fillRect(-2, 28, 5, 5);
+    ctx.restore();
+    // Right upper arm
+    ctx.save(); ctx.translate(x + 13, y - 42 + bob); ctx.rotate(0.3 + armSwR);
+    ctx.fillStyle = gc; ctx.fillRect(-4, 0, 8, 16);
+    ctx.fillStyle = gcd; ctx.beginPath(); ctx.ellipse(0, 17, 4, 3.5, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = gsk; ctx.fillRect(-3, 17, 6, 14);
+    ctx.fillStyle = '#606870'; ctx.fillRect(-1, 30, 3, 16);
+    ctx.fillStyle = '#9ab0c0'; ctx.fillRect(0, 30, 1, 14);
+    ctx.fillStyle = '#8b5e20'; ctx.fillRect(-2, 28, 5, 5);
+    ctx.restore();
+
+    // --- Neck ---
+    ctx.fillStyle = gc; ctx.fillRect(x - 4, y - 46 + bob, 8, 7);
+
+    // --- Head (big, with giant ears) ---
+    // Skull base
+    ctx.fillStyle = gc;
+    ctx.beginPath(); ctx.ellipse(x, y - 58 + bob, 14, 13, 0, 0, Math.PI*2); ctx.fill();
+    // Big ears
+    ctx.fillStyle = gc;
+    ctx.beginPath(); ctx.ellipse(x - 18, y - 58 + bob, 7, 11, -0.2, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(x + 18, y - 58 + bob, 7, 11, 0.2, 0, Math.PI*2); ctx.fill();
+    // Inner ear
+    ctx.fillStyle = '#c08080';
+    ctx.beginPath(); ctx.ellipse(x - 18, y - 58 + bob, 4, 7, -0.2, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(x + 18, y - 58 + bob, 4, 7, 0.2, 0, Math.PI*2); ctx.fill();
+    // Ear piercings (bone)
+    ctx.fillStyle = '#d4c5a9';
+    ctx.beginPath(); ctx.arc(x - 23, y - 62 + bob, 2, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x + 23, y - 62 + bob, 2, 0, Math.PI*2); ctx.fill();
+
+    // Face detail
+    // Brow ridge
+    ctx.fillStyle = gcd;
+    ctx.fillRect(x - 12, y - 64 + bob, 24, 4);
+    // War paint
+    ctx.fillStyle = '#c8381a';
+    ctx.fillRect(x - 11, y - 63 + bob, 7, 2);
+    ctx.fillRect(x + 4, y - 63 + bob, 7, 2);
+    // Nose
+    ctx.fillStyle = gcd;
+    ctx.fillRect(x - 3, y - 60 + bob, 6, 6);
+    ctx.fillRect(x - 5, y - 57 + bob, 4, 4); ctx.fillRect(x + 1, y - 57 + bob, 4, 4);
+    // Eyes (huge, wide)
+    ctx.fillStyle = '#000';
+    ctx.beginPath(); ctx.ellipse(x - 6, y - 64 + bob, 5, 5, 0, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(x + 6, y - 64 + bob, 5, 5, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = eye;
+    ctx.shadowColor = impaired ? '#7c3aed' : '#ffd700'; ctx.shadowBlur = 8;
+    ctx.beginPath(); ctx.ellipse(x - 6, y - 64 + bob, 3, 3.5, 0, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(x + 6, y - 64 + bob, 3, 3.5, 0, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+    // Pupil
+    ctx.fillStyle = '#000';
+    ctx.fillRect(x - 7, y - 65 + bob, 2, 3); ctx.fillRect(x + 5, y - 65 + bob, 2, 3);
+    // Mouth / tusks
+    ctx.fillStyle = gcd; ctx.fillRect(x - 9, y - 52 + bob, 18, 7);
+    ctx.fillStyle = '#f0e8d8'; // upper fangs
+    ctx.fillRect(x - 7, y - 52 + bob, 3, 6); ctx.fillRect(x + 4, y - 52 + bob, 3, 6);
+    // Lower tusks stick up
+    ctx.fillRect(x - 5, y - 50 + bob, 3, 8); ctx.fillRect(x + 2, y - 50 + bob, 3, 8);
+    // Tribal headband
+    ctx.fillStyle = '#8b2500';
+    ctx.fillRect(x - 14, y - 68 + bob, 28, 4);
+    ctx.fillStyle = '#ffcc00'; ctx.fillRect(x - 3, y - 68 + bob, 6, 4);
+
+    ctx.restore();
+    if (hp < maxHp) {
+      const bw = 46, bh = 5;
+      ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(x-23, y-84, bw, bh);
+      const pct = hp/maxHp;
+      ctx.fillStyle = pct > 0.5 ? '#16a34a' : pct > 0.25 ? '#d97706' : '#dc2626';
+      ctx.fillRect(x-23, y-84, bw*pct, bh);
+    }
+  },
+
+  // ╔══════════════════════════════════════╗
+  // ║  SHADOW WOLF                         ║
+  // ║  Quadruped, sleek, menacing          ║
+  // ║  Visible musculature under fur       ║
+  // ╚══════════════════════════════════════╝
+  wolf(ctx, x, y, t, hp, maxHp, impaired) {
+    ctx.save();
+    if (impaired) { ctx.globalAlpha = 0.75; ctx.shadowColor = '#7c3aed'; ctx.shadowBlur = 18; }
+
+    const bob = impaired ? 0 : Math.sin(t * 0.1) * 2.5;
+    const gallop = Math.sin(t * 0.14);
+    const wc  = impaired ? '#a090c0' : '#5a4838'; // coat
+    const wcl = impaired ? '#c0b0e0' : '#786050'; // light coat
+    const wcd = impaired ? '#6a5890' : '#382820'; // dark coat
+    const wbg = impaired ? '#503880' : '#2a1a10'; // very dark
+    const eye = impaired ? '#7c3aed' : '#d97706';
+
+    const leanX = impaired ? 0 : gallop * 4;
+
+    // --- Tail ---
+    const tailAng = impaired ? 0.2 : 0.4 + Math.sin(t*0.1) * 0.4;
+    ctx.save();
+    ctx.translate(x - 30, y - 28 + bob);
+    ctx.rotate(-tailAng);
+    ctx.fillStyle = wcd; ctx.fillRect(-3, 0, 7, 8);
+    ctx.rotate(-tailAng * 0.6);
+    ctx.fillStyle = wc; ctx.fillRect(-2, 8, 5, 8);
+    ctx.rotate(-tailAng * 0.4);
+    ctx.fillStyle = wcl; ctx.fillRect(-2, 14, 4, 10);
+    ctx.restore();
+
+    // --- Hind legs ---
+    const hindSwL = gallop * 0.35;
+    ctx.save(); ctx.translate(x - 14, y - 22 + bob);
+    ctx.rotate(-hindSwL - 0.1);
+    ctx.fillStyle = wcd; ctx.fillRect(-5, 0, 10, 14);
+    ctx.rotate(hindSwL * 1.5 + 0.3);
+    ctx.fillStyle = wc; ctx.fillRect(-4, 14, 8, 12);
+    ctx.rotate(-0.2);
+    ctx.fillStyle = wbg; ctx.fillRect(-3, 26, 9, 5);
+    ctx.restore();
+
+    ctx.save(); ctx.translate(x - 6, y - 22 + bob);
+    ctx.rotate(hindSwL - 0.1);
+    ctx.fillStyle = wcd; ctx.fillRect(-5, 0, 10, 14);
+    ctx.rotate(-hindSwL * 1.5 + 0.3);
+    ctx.fillStyle = wc; ctx.fillRect(-4, 14, 8, 12);
+    ctx.rotate(-0.2);
+    ctx.fillStyle = wbg; ctx.fillRect(-5, 26, 9, 5);
+    ctx.restore();
+
+    // --- Body ---
+    ctx.save();
+    ctx.translate(x + leanX * 0.3, y - 30 + bob);
+    ctx.rotate(-0.05 + gallop * 0.04);
+    // Belly
+    ctx.fillStyle = wcl;
+    ctx.beginPath(); ctx.ellipse(0, 0, 22, 12, 0, 0, Math.PI*2); ctx.fill();
+    // Back / top fur
+    ctx.fillStyle = wc;
+    ctx.fillRect(-22, -12, 44, 14);
+    ctx.beginPath(); ctx.ellipse(0, -12, 20, 7, 0, 0, Math.PI*2); ctx.fill();
+    // Dark saddle marking
+    ctx.fillStyle = wcd;
+    ctx.beginPath(); ctx.ellipse(0, -13, 14, 5, 0, 0, Math.PI*2); ctx.fill();
+    // Fur texture lines
+    ctx.fillStyle = wbg;
+    for (let i = -3; i <= 3; i++) ctx.fillRect(i*5, -16, 2, 6);
+    ctx.restore();
+
+    // --- Front legs ---
+    const frontSwL = -gallop * 0.35;
+    ctx.save(); ctx.translate(x + 8, y - 22 + bob);
+    ctx.rotate(frontSwL + 0.05);
+    ctx.fillStyle = wcd; ctx.fillRect(-5, 0, 10, 14);
+    ctx.rotate(-frontSwL * 1.4);
+    ctx.fillStyle = wc; ctx.fillRect(-4, 14, 8, 12);
+    ctx.fillStyle = wbg; ctx.fillRect(-3, 26, 9, 5);
+    ctx.restore();
+
+    ctx.save(); ctx.translate(x + 16, y - 22 + bob);
+    ctx.rotate(-frontSwL + 0.05);
+    ctx.fillStyle = wcd; ctx.fillRect(-5, 0, 10, 14);
+    ctx.rotate(frontSwL * 1.4);
+    ctx.fillStyle = wc; ctx.fillRect(-4, 14, 8, 12);
+    ctx.fillStyle = wbg; ctx.fillRect(-5, 26, 9, 5);
+    ctx.restore();
+
+    // --- Neck ---
+    ctx.save();
+    ctx.translate(x + 16 + leanX * 0.5, y - 34 + bob);
+    ctx.rotate(0.25 + gallop * 0.05);
+    ctx.fillStyle = wc; ctx.fillRect(-7, 0, 14, 16);
+    // Mane/ruff
+    ctx.fillStyle = wbg;
+    ctx.fillRect(-9, 0, 4, 14); ctx.fillRect(5, 0, 4, 14);
+    ctx.restore();
+
+    // --- Head ---
+    const hx = x + 26 + leanX, hy = y - 46 + bob;
+    // Skull
+    ctx.fillStyle = wc;
+    ctx.beginPath(); ctx.ellipse(hx, hy - 2, 13, 10, 0.25, 0, Math.PI*2); ctx.fill();
+    // Snout / muzzle
+    ctx.fillStyle = wcd;
+    ctx.beginPath(); ctx.ellipse(hx + 10, hy + 3, 12, 7, 0.1, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = wcl;
+    ctx.beginPath(); ctx.ellipse(hx + 10, hy + 4, 10, 5, 0.1, 0, Math.PI*2); ctx.fill();
+    // Nose
+    ctx.fillStyle = '#1a0a0a';
+    ctx.beginPath(); ctx.ellipse(hx + 20, hy + 2, 4, 3, 0, 0, Math.PI*2); ctx.fill();
+    // Nostrils
+    ctx.fillStyle = '#0a0505';
+    ctx.beginPath(); ctx.ellipse(hx + 19, hy + 2, 2, 1.5, -0.3, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(hx + 22, hy + 2, 2, 1.5, 0.3, 0, Math.PI*2); ctx.fill();
+    // Lips / teeth
+    ctx.fillStyle = wbg; ctx.fillRect(hx + 4, hy + 7, 14, 4);
+    ctx.fillStyle = '#f0e8d8';
+    ctx.fillRect(hx + 6, hy + 6, 2, 5); ctx.fillRect(hx + 10, hy + 6, 2, 4);
+    ctx.fillRect(hx + 14, hy + 6, 2, 5);
+    // Eyes
+    ctx.fillStyle = '#1a0a0a';
+    ctx.beginPath(); ctx.ellipse(hx + 2, hy - 4, 5, 4, 0.1, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = eye;
+    ctx.shadowColor = impaired ? '#7c3aed' : '#fbbf24'; ctx.shadowBlur = 10;
+    ctx.beginPath(); ctx.ellipse(hx + 2, hy - 4, 3, 2.5, 0.1, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(hx + 1, hy - 5, 2, 3);
+    // Eye highlight
+    ctx.fillStyle = '#fff'; ctx.fillRect(hx + 3, hy - 5, 1, 1);
+    // Ears (upright, alert)
+    ctx.fillStyle = wc;
+    ctx.save(); ctx.translate(hx - 5, hy - 10); ctx.rotate(-0.3);
+    ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-8,-18); ctx.lineTo(6,-18); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#c08080'; ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-5,-14); ctx.lineTo(4,-14); ctx.closePath(); ctx.fill();
+    ctx.restore();
+    ctx.save(); ctx.translate(hx + 5, hy - 10); ctx.rotate(0.3);
+    ctx.fillStyle = wc;
+    ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-6,-18); ctx.lineTo(8,-18); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#c08080'; ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-3,-14); ctx.lineTo(5,-14); ctx.closePath(); ctx.fill();
+    ctx.restore();
+
+    ctx.restore();
+    if (hp < maxHp) {
+      const bw = 52, bh = 5;
+      ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(x-4, y-60, bw, bh);
+      const pct = hp/maxHp;
+      ctx.fillStyle = pct > 0.5 ? '#16a34a' : pct > 0.25 ? '#d97706' : '#dc2626';
+      ctx.fillRect(x-4, y-60, bw*pct, bh);
+    }
+  },
+
+  // ╔══════════════════════════════════════╗
+  // ║  SHADOW COPY                         ║
+  // ║  Ink-void silhouette, glowing eyes   ║
+  // ║  Type-shaped but fully desaturated   ║
+  // ╚══════════════════════════════════════╝
+  shadowCopy(ctx, x, y, t, type, active) {
+    ctx.save();
+    const pulse = 0.85 + Math.sin(t * 0.12) * 0.15;
+    ctx.globalAlpha = active ? pulse : 0.5;
+    const bob = Math.sin(t * 0.1) * 2.5;
+
+    // Void aura beneath
+    const aura = ctx.createRadialGradient(x, y - 10, 0, x, y - 10, 45);
+    aura.addColorStop(0, 'rgba(45,10,90,0.7)');
+    aura.addColorStop(0.5, 'rgba(20,5,50,0.4)');
+    aura.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = aura;
+    ctx.beginPath(); ctx.ellipse(x, y - 10, 45, 55, 0, 0, Math.PI*2); ctx.fill();
+
+    // Chromatic mist tendrils at feet
+    for (let i = 0; i < 5; i++) {
+      const ta = t * 0.08 + i * 1.26;
+      const tx2 = x + Math.cos(ta) * (6 + i*3);
+      const ty2 = y + Math.sin(ta*0.5) * 3;
+      ctx.globalAlpha = 0.2 * pulse;
+      ctx.fillStyle = i % 2 === 0 ? '#7c3aed' : '#c4b5fd';
+      ctx.fillRect(tx2 - 2, ty2 - 3, 3, 8 + i*2);
+    }
+    ctx.globalAlpha = active ? pulse : 0.5;
+
+    // Draw type-shaped silhouette in deep void
+    ctx.fillStyle = '#07021a';
+    ctx.shadowColor = '#5b21b6';
+    ctx.shadowBlur = 12;
+
+    if (type === 'skeleton') {
+      // Humanoid — skeleton shaped silhouette
+      ctx.fillRect(x-4, y-22+bob, 8, 22); // pelvis/legs
+      ctx.fillRect(x-3, y-40+bob, 6, 20); // torso
+      ctx.fillRect(x-12,y-58+bob, 7, 18); // L arm
+      ctx.fillRect(x+5, y-58+bob, 7, 18); // R arm
+      ctx.beginPath(); ctx.ellipse(x, y-65+bob, 10, 11, 0, 0, Math.PI*2); ctx.fill(); // skull
+      // Sword silhouette
+      ctx.fillRect(x+8, y-52+bob, 3, 28);
+    } else if (type === 'goblin') {
+      // Hunched silhouette
+      ctx.save(); ctx.translate(x, y+bob); ctx.rotate(-0.1);
+      ctx.fillRect(-10,-40, 20, 22);
+      ctx.fillRect(-6,-55, 12, 18);
+      ctx.fillRect(-16,-50, 6, 20); ctx.fillRect(10,-50, 6, 20); // arms
+      ctx.beginPath(); ctx.ellipse(0,-60, 12, 11, 0, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(-16,-60, 5, 8, -0.2, 0, Math.PI*2); ctx.fill(); // ear
+      ctx.beginPath(); ctx.ellipse(16,-60, 5, 8, 0.2, 0, Math.PI*2); ctx.fill(); // ear
+      // Dagger silhouettes
+      ctx.fillRect(-14,-32, 2, 14); ctx.fillRect(12,-32, 2, 14);
+      ctx.restore();
+    } else if (type === 'wolf') {
+      // Quadruped silhouette
+      ctx.fillRect(x-28, y-30+bob, 44, 16); // body
+      ctx.fillRect(x-14, y-14+bob, 7, 14); ctx.fillRect(x-5,y-14+bob, 7, 14); // hind
+      ctx.fillRect(x+8, y-14+bob, 7, 14); ctx.fillRect(x+16,y-14+bob, 7, 14); // front
+      // Head
+      ctx.beginPath(); ctx.ellipse(x+30, y-36+bob, 11, 9, 0.2, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(x+42, y-33+bob, 9, 6, 0.1, 0, Math.PI*2); ctx.fill(); // snout
+      // Tail
+      ctx.save(); ctx.translate(x-28, y-28+bob); ctx.rotate(-0.5);
+      ctx.fillRect(-3,0,6,18); ctx.restore();
+    }
+
+    ctx.shadowBlur = 0;
+
+    // Glowing eyes — the defining feature
+    const eyeBright = 0.7 + Math.sin(t * 0.2) * 0.3;
+    ctx.shadowColor = '#c4b5fd'; ctx.shadowBlur = 14;
+    ctx.fillStyle = '#c4b5fd';
+    ctx.globalAlpha = eyeBright * (active ? 1 : 0.6);
+
+    if (type === 'skeleton') {
+      ctx.beginPath(); ctx.ellipse(x-4, y-65+bob, 3, 3, 0, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(x+4, y-65+bob, 3, 3, 0, 0, Math.PI*2); ctx.fill();
+    } else if (type === 'goblin') {
+      ctx.beginPath(); ctx.ellipse(x-5, y-60+bob, 3.5, 4, 0, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(x+5, y-60+bob, 3.5, 4, 0, 0, Math.PI*2); ctx.fill();
+    } else if (type === 'wolf') {
+      ctx.beginPath(); ctx.ellipse(x+28, y-38+bob, 3, 2.5, 0.2, 0, Math.PI*2); ctx.fill();
+    }
+    ctx.shadowBlur = 0;
+
+    ctx.restore();
+  },
+
+  // ╔══════════════════════════════════════╗
+  // ║  D MAGNO — Shadow Assassin           ║
+  // ║  Tall lean figure, dark leather,     ║
+  // ║  twin reverse-grip daggers,          ║
+  // ║  half-fused with his own shadow      ║
+  // ╚══════════════════════════════════════╝
+  dMagno(ctx, x, y, t, hp, maxHp, impaired, phase, phaseAlpha) {
+    // phase: 'corporeal' | 'shadow'
+    // phaseAlpha: 0-1 fade between states
+    ctx.save();
+
+    const bob = impaired ? 0 : Math.sin(t * 0.09) * 2;
+    const walk = Math.sin(t * 0.12);
+    const isShadow = phase === 'shadow';
+
+    // Shadow phase — inky distortion aura
+    if (isShadow || phaseAlpha > 0) {
+      const aa = isShadow ? (0.5 + Math.sin(t*0.2)*0.3) : phaseAlpha * 0.5;
+      ctx.globalAlpha = aa;
+      const distAura = ctx.createRadialGradient(x, y-50, 0, x, y-50, 55);
+      distAura.addColorStop(0, 'rgba(180,100,0,0.6)');
+      distAura.addColorStop(0.4, 'rgba(100,40,0,0.3)');
+      distAura.addColorStop(1, 'transparent');
+      ctx.fillStyle = distAura;
+      ctx.beginPath(); ctx.ellipse(x, y-45, 50, 65, 0, 0, Math.PI*2); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
+    // Corporeal alpha (fade during phase transition)
+    const corpAlpha = impaired ? 0.7 : isShadow ? Math.max(0, 0.15 - phaseAlpha*0.1) : 1 - phaseAlpha * 0.85;
+    ctx.globalAlpha = corpAlpha;
+
+    // ── Legs ──
+    const legSwing = impaired ? 0 : walk * 0.3;
+    const dc1 = '#1a0d30', dc2 = '#0d0820', dc3 = '#2a1545';
+    // Left leg (dark leather)
+    ctx.save(); ctx.translate(x-6, y-28+bob); ctx.rotate(-legSwing);
+    ctx.fillStyle = dc1; ctx.fillRect(-5,0,10,20);
+    ctx.fillStyle = dc2; ctx.fillRect(-3,20,6,18);
+    ctx.fillStyle = dc3; ctx.fillRect(-6,36,13,6); ctx.restore();
+    // Right leg
+    ctx.save(); ctx.translate(x+6, y-28+bob); ctx.rotate(legSwing);
+    ctx.fillStyle = dc1; ctx.fillRect(-5,0,10,20);
+    ctx.fillStyle = dc2; ctx.fillRect(-3,20,6,18);
+    ctx.fillStyle = dc3; ctx.fillRect(-7,36,13,6); ctx.restore();
+
+    // ── Torso — fitted dark leather armour ──
+    ctx.fillStyle = dc1; ctx.fillRect(x-13, y-56+bob, 26, 30);
+    // Armour panels
+    ctx.fillStyle = '#241040';
+    ctx.fillRect(x-12, y-55+bob, 24, 6);
+    ctx.fillRect(x-12, y-47+bob, 24, 5);
+    ctx.fillRect(x-12, y-39+bob, 24, 4);
+    // Centre chest piece
+    ctx.fillStyle = '#8b5cf6';
+    ctx.fillRect(x-4, y-56+bob, 8, 28);
+    ctx.fillStyle = '#6d28d9';
+    ctx.fillRect(x-3, y-55+bob, 6, 26);
+    // Amber gem
+    ctx.fillStyle = '#d97706';
+    ctx.shadowColor = '#fbbf24'; ctx.shadowBlur = 8;
+    ctx.beginPath(); ctx.ellipse(x, y-45+bob, 4, 5, 0, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+    // Cloak wisps (shadow phase tendrils)
+    if (!isShadow) {
+      ctx.fillStyle = 'rgba(30,10,60,0.7)';
+      for (let i=0;i<3;i++) {
+        const wx = x + (i-1)*12;
+        const wh = 20 + Math.sin(t*0.08+i)*8;
+        ctx.fillRect(wx-3, y-24+bob, 6, wh);
+      }
+    }
+
+    // ── Arms ──
+    const castAng = impaired ? 0 : Math.sin(t*0.1)*0.1;
+    const aSwL = walk * 0.25, aSwR = -walk * 0.25;
+    // Left upper arm
+    ctx.save(); ctx.translate(x-13, y-54+bob); ctx.rotate(-0.2+aSwL+castAng);
+    ctx.fillStyle = dc1; ctx.fillRect(-4,0,8,18);
+    ctx.fillStyle = dc2; ctx.fillRect(-3,18,6,14);
+    // Left dagger (reverse grip — handle down, blade up)
+    ctx.fillStyle = '#1a2530'; ctx.fillRect(-2,30,5,4); // handle
+    ctx.fillStyle = '#8090a0'; ctx.fillRect(-1,10,3,22); // blade (pointing up)
+    ctx.fillStyle = '#c0d0e0'; ctx.fillRect(-0.5,10,1.5,20);
+    ctx.fillStyle = '#b8860b'; ctx.fillRect(-4,28,9,4); // guard
+    ctx.restore();
+    // Right upper arm
+    ctx.save(); ctx.translate(x+13, y-54+bob); ctx.rotate(0.2+aSwR-castAng);
+    ctx.fillStyle = dc1; ctx.fillRect(-4,0,8,18);
+    ctx.fillStyle = dc2; ctx.fillRect(-3,18,6,14);
+    // Right dagger (reverse grip)
+    ctx.fillStyle = '#1a2530'; ctx.fillRect(-3,30,5,4);
+    ctx.fillStyle = '#8090a0'; ctx.fillRect(-2,10,3,22);
+    ctx.fillStyle = '#c0d0e0'; ctx.fillRect(-1.5,10,1.5,20);
+    ctx.fillStyle = '#b8860b'; ctx.fillRect(-5,28,9,4);
+    ctx.restore();
+
+    // ── Neck ──
+    ctx.fillStyle = '#2a1a3a'; ctx.fillRect(x-4, y-60+bob, 8, 6);
+
+    // ── Head ──
+    // Head shape (lean, angular)
+    ctx.fillStyle = '#c4a070'; // slightly weathered skin
+    ctx.beginPath(); ctx.ellipse(x, y-72+bob, 12, 13, 0, 0, Math.PI*2); ctx.fill();
+    // Jaw
+    ctx.fillStyle = '#b08860'; ctx.fillRect(x-8, y-66+bob, 16, 8);
+    ctx.beginPath(); ctx.ellipse(x, y-62+bob, 8, 4, 0, 0, Math.PI*2); ctx.fill();
+    // Hair — slicked back, dark
+    ctx.fillStyle = '#0a0508';
+    ctx.beginPath(); ctx.ellipse(x, y-80+bob, 12, 7, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillRect(x-11, y-80+bob, 22, 12);
+    ctx.fillRect(x+9, y-76+bob, 5, 14); // side sweep
+    // Scar across left eye
+    ctx.fillStyle = '#8b3a3a';
+    ctx.fillRect(x-9, y-76+bob, 2, 12);
+    // Eyes — one normal, one amber (shadow-merged)
+    ctx.fillStyle = '#0d0820';
+    ctx.fillRect(x-8, y-74+bob, 5, 4);
+    ctx.fillRect(x+2, y-74+bob, 5, 4);
+    // Left eye — amber glow (shadow-merged eye)
+    const eyePulse = 0.7 + Math.sin(t*0.18)*0.3;
+    ctx.fillStyle = '#d97706';
+    ctx.shadowColor = '#fbbf24'; ctx.shadowBlur = 10 * eyePulse;
+    ctx.fillRect(x-7, y-73+bob, 3, 2);
+    ctx.shadowBlur = 0;
+    // Right eye — blue-white (normal)
+    ctx.fillStyle = '#93c5fd';
+    ctx.fillRect(x+3, y-73+bob, 3, 2);
+    // Highlight
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(x-6, y-73+bob, 1, 1); ctx.fillRect(x+4, y-73+bob, 1, 1);
+    // Brow (scowl)
+    ctx.fillStyle = '#0a0508';
+    ctx.fillRect(x-9, y-76+bob, 8, 2);
+    ctx.fillRect(x+1, y-76+bob, 8, 2);
+    // Thin scar vertical
+    ctx.fillStyle = '#c06060';
+    ctx.fillRect(x-7, y-77+bob, 1, 10);
+    // Mouth — thin, grim
+    ctx.fillStyle = '#7a4040';
+    ctx.fillRect(x-4, y-64+bob, 8, 2);
+
+    // Impaired — purple wash
+    if (impaired) {
+      ctx.globalAlpha = 0.35;
+      ctx.fillStyle = '#7c3aed';
+      ctx.fillRect(x-14, y-85+bob, 28, 90);
+    }
+
+    ctx.globalAlpha = 1;
+
+    // Shadow phase overlay — ink silhouette bleeds through
+    if (isShadow || phaseAlpha > 0) {
+      const sa = isShadow ? Math.min(1, 0.7 + phaseAlpha*0.3) : phaseAlpha * 0.6;
+      ctx.globalAlpha = sa;
+      ctx.fillStyle = '#07021a';
+      ctx.shadowColor = '#d97706'; ctx.shadowBlur = 16;
+      // silhouette
+      ctx.fillRect(x-13, y-85+bob, 26, 80);
+      ctx.beginPath(); ctx.ellipse(x, y-78+bob, 13, 14, 0, 0, Math.PI*2); ctx.fill();
+      ctx.shadowBlur = 0;
+      // amber eyes in shadow form
+      ctx.fillStyle = '#fbbf24';
+      ctx.shadowColor = '#fbbf24'; ctx.shadowBlur = 14;
+      ctx.beginPath(); ctx.ellipse(x-4, y-72+bob, 3, 2.5, 0, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(x+4, y-72+bob, 3, 2.5, 0, 0, Math.PI*2); ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.globalAlpha = 1;
+    }
+
+    ctx.restore();
+
+    // HP bar (wider, amber)
+    const bw = 70, bh = 6;
+    ctx.fillStyle = 'rgba(0,0,0,0.8)'; ctx.fillRect(x-35, y-105, bw, bh);
+    const pct = hp/maxHp;
+    ctx.fillStyle = pct > 0.6 ? '#d97706' : pct > 0.3 ? '#ef4444' : '#7f1d1d';
+    ctx.shadowColor = '#fbbf24'; ctx.shadowBlur = pct > 0.3 ? 6 : 0;
+    ctx.fillRect(x-35, y-105, bw*pct, bh);
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = 'rgba(217,119,6,0.4)'; ctx.lineWidth = 0.5;
+    ctx.strokeRect(x-35, y-105, bw, bh);
+    // Phase window indicator — amber ring pulses during corporeal
+    if (!isShadow && !impaired) {
+      const rPulse = 0.4 + Math.sin(t*0.12)*0.3;
+      ctx.save();
+      ctx.globalAlpha = rPulse;
+      ctx.strokeStyle = '#fbbf24'; ctx.lineWidth = 2;
+      ctx.shadowColor = '#fbbf24'; ctx.shadowBlur = 10;
+      ctx.beginPath(); ctx.arc(x, y-50+bob, 28, 0, Math.PI*2); ctx.stroke();
+      ctx.restore();
+    }
+    // Impair countdown arc
+    if (impaired) {
+      ctx.save();
+      ctx.strokeStyle = '#7c3aed'; ctx.lineWidth = 3;
+      ctx.globalAlpha = 0.7;
+      ctx.beginPath();
+      ctx.arc(x, y-107, 9, -Math.PI/2, (impaired.timer||0)/200 * Math.PI*2 - Math.PI/2);
+      ctx.stroke(); ctx.restore();
+    }
+  },
+
+  // D Magno shadow copy — lean humanoid, amber eyes, flicker-step idle
+  shadowDMagno(ctx, x, y, t, active) {
+    ctx.save();
+    const pulse = 0.82 + Math.sin(t * 0.13) * 0.18;
+    // Flicker effect — occasional partial transparency
+    const flicker = Math.sin(t * 0.4) > 0.7 ? 0.6 : 1.0;
+    ctx.globalAlpha = active ? pulse * flicker : 0.45;
+    const bob = Math.sin(t * 0.1) * 2;
+
+    // Amber aura (distinct from violet shadows)
+    const aura = ctx.createRadialGradient(x, y-40, 0, x, y-40, 42);
+    aura.addColorStop(0, 'rgba(120,60,0,0.7)');
+    aura.addColorStop(0.5, 'rgba(60,25,0,0.35)');
+    aura.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = aura;
+    ctx.beginPath(); ctx.ellipse(x, y-38, 42, 52, 0, 0, Math.PI*2); ctx.fill();
+
+    // Amber foot tendrils
+    for (let i = 0; i < 4; i++) {
+      const ta = t * 0.09 + i * 1.57;
+      ctx.globalAlpha = 0.25 * pulse * flicker;
+      ctx.fillStyle = i%2===0 ? '#d97706' : '#fbbf24';
+      ctx.fillRect(x + Math.cos(ta)*(5+i*3)-1.5, y-2, 3, 7+i*2);
+    }
+    ctx.globalAlpha = active ? pulse * flicker : 0.45;
+
+    // Silhouette — lean assassin shape
+    ctx.fillStyle = '#0a0310';
+    ctx.shadowColor = '#d97706'; ctx.shadowBlur = 10;
+    // Legs
+    ctx.fillRect(x-6, y-28+bob, 5, 28);
+    ctx.fillRect(x+1, y-28+bob, 5, 28);
+    // Torso
+    ctx.fillRect(x-12, y-56+bob, 24, 30);
+    // Arms with daggers pointing up
+    ctx.fillRect(x-18, y-55+bob, 6, 22);
+    ctx.fillRect(x-18, y-72+bob, 4, 18); // dagger blade up-left
+    ctx.fillRect(x+12, y-55+bob, 6, 22);
+    ctx.fillRect(x+14, y-72+bob, 4, 18); // dagger blade up-right
+    // Head
+    ctx.beginPath(); ctx.ellipse(x, y-68+bob, 11, 12, 0, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // Amber eyes (both now — fully shadow-merged)
+    const eBright = 0.75 + Math.sin(t*0.22)*0.25;
+    ctx.globalAlpha = eBright * (active ? flicker : 0.5);
+    ctx.fillStyle = '#fbbf24';
+    ctx.shadowColor = '#d97706'; ctx.shadowBlur = 12;
+    ctx.beginPath(); ctx.ellipse(x-4, y-68+bob, 3, 2.5, 0, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(x+4, y-68+bob, 3, 2.5, 0, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
+};
+
+
+
+// ══════════════════ THREE.JS SCENE SETUP ══════════════════
+const PLANET_R = 34;
+const threeCanvas = document.getElementById('three-canvas');
+const fxCanvas = document.getElementById('fx-canvas');
+const fxCtx = fxCanvas.getContext('2d');
+
+const renderer = new THREE.WebGLRenderer({ canvas: threeCanvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.25;
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x0a0518, PLANET_R * 3.2, PLANET_R * 9);
+
+const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 400);
+
+function resizeRenderer() {
+  const w = window.innerWidth, h = window.innerHeight;
+  renderer.setSize(w, h, true);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  fxCanvas.width = w; fxCanvas.height = h;
+}
+window.addEventListener('resize', resizeRenderer);
+resizeRenderer();
+
+// ── Lights ──────────────────────────────────────────────────
+const hemi = new THREE.HemisphereLight(0x5a4aa0, 0x0a0620, 0.9);
+scene.add(hemi);
+
+const sun = new THREE.DirectionalLight(0x9db4ff, 1.15);
+sun.position.set(120, 90, 60);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -60; sun.shadow.camera.right = 60;
+sun.shadow.camera.top = 60;   sun.shadow.camera.bottom = -60;
+sun.shadow.camera.near = 1;   sun.shadow.camera.far = 260;
+sun.shadow.bias = -0.0015;
+scene.add(sun);
+
+const fill = new THREE.AmbientLight(0x2e2258, 0.55);
+scene.add(fill);
+
+// ── Procedural helpers ─────────────────────────────────────
+function makeCanvas(w, h) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  return { c, ctx: c.getContext('2d') };
+}
+
+// Equirectangular starfield + twin moons, mapped onto an inverted
+// backdrop sphere so it reads as a real environment while orbiting.
+function buildSkyTexture() {
+  const { c, ctx: s } = makeCanvas(1600, 800);
+  const sky = s.createLinearGradient(0, 0, 0, 800);
+  sky.addColorStop(0, '#010007'); sky.addColorStop(0.35, '#050212');
+  sky.addColorStop(0.6, '#0a0320'); sky.addColorStop(1, '#170a38');
+  s.fillStyle = sky; s.fillRect(0, 0, 1600, 800);
+  for (let i = 0; i < 420; i++) {
+    const sx = Math.random() * 1600, sy = Math.random() * 620;
+    const r = Math.random() < 0.08 ? 2 : 1;
+    s.fillStyle = `rgba(212,197,169,${0.25 + Math.random()*0.55})`;
+    s.fillRect(sx, sy, r, r);
+  }
+  // Violet moon
+  s.save();
+  s.fillStyle = '#3d2b80'; s.globalAlpha = 0.85;
+  s.beginPath(); s.arc(1180, 160, 62, 0, Math.PI*2); s.fill();
+  s.fillStyle = '#150730'; s.globalAlpha = 0.9;
+  s.beginPath(); s.arc(1155, 145, 54, 0, Math.PI*2); s.fill();
+  s.restore();
+  // Bone moon
+  s.save();
+  s.fillStyle = '#c8bfab'; s.globalAlpha = 0.6;
+  s.beginPath(); s.arc(340, 120, 26, 0, Math.PI*2); s.fill();
+  s.restore();
+  // Distant nebula haze
+  s.save();
+  s.globalAlpha = 0.12;
+  const neb = s.createRadialGradient(800, 300, 0, 800, 300, 500);
+  neb.addColorStop(0, '#7c3aed'); neb.addColorStop(1, 'transparent');
+  s.fillStyle = neb; s.fillRect(0, 0, 1600, 800);
+  s.restore();
+  const tex = new THREE.CanvasTexture(c);
+  tex.encoding = THREE.sRGBEncoding;
+  return tex;
+}
+const skyGeo = new THREE.SphereGeometry(280, 32, 24);
+const skyMat = new THREE.MeshBasicMaterial({ map: buildSkyTexture(), side: THREE.BackSide, fog: false });
+scene.add(new THREE.Mesh(skyGeo, skyMat));
+
+// Planet surface texture — dark shard-stone with cracks
+function buildPlanetTexture() {
+  const { c, ctx: g } = makeCanvas(1024, 512);
+  g.fillStyle = '#1a1030'; g.fillRect(0, 0, 1024, 512);
+  for (let i = 0; i < 3000; i++) {
+    const x = Math.random()*1024, y = Math.random()*512;
+    const shade = 20 + Math.random()*30;
+    g.fillStyle = `rgba(${shade+30},${shade+20},${shade+55},${0.15+Math.random()*0.3})`;
+    const s2 = 2 + Math.random()*5;
+    g.fillRect(x, y, s2, s2);
+  }
+  // Crack lines
+  g.strokeStyle = 'rgba(90,50,160,0.35)'; g.lineWidth = 1.5;
+  for (let i = 0; i < 40; i++) {
+    g.beginPath();
+    let x = Math.random()*1024, y = Math.random()*512;
+    g.moveTo(x, y);
+    for (let j = 0; j < 5; j++) {
+      x += (Math.random()-0.5)*60; y += (Math.random()-0.5)*60;
+      g.lineTo(x, y);
+    }
+    g.stroke();
+  }
+  // Amber vein glow patches
+  for (let i = 0; i < 14; i++) {
+    const x = Math.random()*1024, y = Math.random()*512;
+    const grad = g.createRadialGradient(x,y,0,x,y,18);
+    grad.addColorStop(0, 'rgba(217,119,6,0.25)');
+    grad.addColorStop(1, 'transparent');
+    g.fillStyle = grad; g.fillRect(x-18,y-18,36,36);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.encoding = THREE.sRGBEncoding;
+  tex.anisotropy = 4;
+  return tex;
+}
+
+const planetGeo = new THREE.SphereGeometry(PLANET_R, 64, 48);
+const planetMat = new THREE.MeshStandardMaterial({ map: buildPlanetTexture(), roughness: 0.86, metalness: 0.08 });
+const planet = new THREE.Mesh(planetGeo, planetMat);
+planet.receiveShadow = true;
+scene.add(planet);
+
+// ══════════════════════════════════════════════════════════════
+//  3D CHARACTER SYSTEM
+//  Procedural articulated humanoid built from Three.js geometry.
+//  The mesh is a proper 3D object in the scene — receives real
+//  lighting, casts shadows, rotates to face movement direction,
+//  and plays skeletal animations via Object3D hierarchy each frame.
+//  No external FBX or texture files required.
+// ══════════════════════════════════════════════════════════════
+const Char3D = (() => {
+  // ── Material library ──────────────────────────────────────
+  const mats = {
+    skin:     new THREE.MeshStandardMaterial({ color:0xc4a882, roughness:0.85, metalness:0.0  }),
+    hair:     new THREE.MeshStandardMaterial({ color:0x1a1008, roughness:0.9,  metalness:0.0  }),
+    jacket:   new THREE.MeshStandardMaterial({ color:0x1a1530, roughness:0.75, metalness:0.08 }),
+    trousers: new THREE.MeshStandardMaterial({ color:0x1c1830, roughness:0.82, metalness:0.0  }),
+    boots:    new THREE.MeshStandardMaterial({ color:0x0d0a18, roughness:0.7,  metalness:0.12 }),
+    belt:     new THREE.MeshStandardMaterial({ color:0x3d2a10, roughness:0.7,  metalness:0.2  }),
+    beltBuckle: new THREE.MeshStandardMaterial({ color:0xd97706, roughness:0.3, metalness:0.8, emissive:0xd97706, emissiveIntensity:0.4 }),
+    cloak:    new THREE.MeshStandardMaterial({ color:0x12082a, roughness:0.88, metalness:0.05, side:THREE.DoubleSide }),
+    cloakTrim:new THREE.MeshStandardMaterial({ color:0x5b21b6, roughness:0.5, metalness:0.2, emissive:0x2d1b69, emissiveIntensity:0.3 }),
+    eye_l:    new THREE.MeshStandardMaterial({ color:0x93c5fd, roughness:0.1, metalness:0.0, emissive:0x1e3a5f, emissiveIntensity:0.6 }),
+    eye_r:    new THREE.MeshStandardMaterial({ color:0x93c5fd, roughness:0.1, metalness:0.0, emissive:0x1e3a5f, emissiveIntensity:0.6 }),
+    handGlow: new THREE.MeshStandardMaterial({ color:0xc4b5fd, roughness:0.2, metalness:0.0, emissive:0x7c3aed, emissiveIntensity:0.0 }),
+    scar:     new THREE.MeshStandardMaterial({ color:0x8b3a3a, roughness:0.9, metalness:0.0 }),
+  };
+
+  function box(w, h, d, mat) {
+    return new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  }
+  function sphere(r, mat, wSeg=8, hSeg=6) {
+    return new THREE.Mesh(new THREE.SphereGeometry(r, wSeg, hSeg), mat);
+  }
+  function cyl(rt, rb, h, mat, seg=6) {
+    return new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, seg), mat);
+  }
+
+  // Build the full character hierarchy under a root Object3D.
+  // All positions are in local character space where +Y is up
+  // (relative to the surface normal) and +Z faces the camera.
+  function buildCharacter() {
+    const root = new THREE.Object3D(); // placed on planet surface
+    root.castShadow = false; // meshes cast individually
+
+    // ── Torso ─────────────────────────────────────────────
+    const torso = new THREE.Object3D();
+    torso.position.y = 0.85; // above ground
+    root.add(torso);
+
+    const body = box(0.52, 0.68, 0.28, mats.jacket);
+    body.castShadow = true; body.receiveShadow = true;
+    torso.add(body);
+
+    // Chest detail — darker centre stripe
+    const stripe = box(0.14, 0.60, 0.30, mats.trousers);
+    stripe.position.z = 0.01;
+    torso.add(stripe);
+
+    // Belt
+    const belt = box(0.56, 0.10, 0.30, mats.belt);
+    belt.position.y = -0.26;
+    torso.add(belt);
+    const buckle = box(0.12, 0.08, 0.32, mats.beltBuckle);
+    buckle.position.y = -0.26;
+    torso.add(buckle);
+
+    // Cloak — two panels, back
+    const cloakBack = box(0.60, 0.80, 0.04, mats.cloak);
+    cloakBack.position.set(0, -0.18, -0.17);
+    torso.add(cloakBack);
+    const cloakTrimBottom = box(0.62, 0.04, 0.06, mats.cloakTrim);
+    cloakTrimBottom.position.set(0, -0.58, -0.17);
+    torso.add(cloakTrimBottom);
+
+    // Collar
+    const collar = box(0.50, 0.10, 0.32, mats.jacket);
+    collar.position.y = 0.30;
+    torso.add(collar);
+    const collarL = box(0.10, 0.26, 0.30, new THREE.MeshStandardMaterial({ color:0x241040, roughness:0.75 }));
+    collarL.position.set(-0.18, 0.24, 0.0);
+    collarL.rotation.z = 0.25;
+    torso.add(collarL);
+    const collarR = collarL.clone();
+    collarR.position.x = 0.18;
+    collarR.rotation.z = -0.25;
+    torso.add(collarR);
+
+    // ── Head ──────────────────────────────────────────────
+    const headPivot = new THREE.Object3D();
+    headPivot.position.y = 0.40; // top of torso
+    torso.add(headPivot);
+    root.userData.headPivot = headPivot;
+
+    // Neck
+    const neck = cyl(0.12, 0.13, 0.14, mats.skin);
+    neck.position.y = 0.07;
+    headPivot.add(neck);
+
+    // Head
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.20, 10, 8), mats.skin);
+    head.scale.set(1, 1.08, 0.95);
+    head.position.y = 0.26;
+    headPivot.add(head);
+
+    // Hair — top + sides
+    const hairTop = new THREE.Mesh(new THREE.SphereGeometry(0.205, 10, 6), mats.hair);
+    hairTop.position.y = 0.295;
+    hairTop.scale.set(1.02, 0.7, 1.0);
+    headPivot.add(hairTop);
+    // Side hair (covers ears)
+    const hairL = box(0.07, 0.24, 0.18, mats.hair);
+    hairL.position.set(-0.18, 0.26, -0.02);
+    headPivot.add(hairL);
+    const hairR = hairL.clone();
+    hairR.position.x = 0.18;
+    headPivot.add(hairR);
+    // Back hair tuft
+    const hairBack = box(0.30, 0.20, 0.08, mats.hair);
+    hairBack.position.set(0, 0.22, -0.20);
+    headPivot.add(hairBack);
+
+    // Eyes
+    const eyeL = sphere(0.048, mats.eye_l);
+    eyeL.position.set(-0.08, 0.29, 0.17);
+    headPivot.add(eyeL);
+    const eyeR = sphere(0.048, mats.eye_r);
+    eyeR.position.set(0.08, 0.29, 0.17);
+    headPivot.add(eyeR);
+    root.userData.eyeL = eyeL;
+    root.userData.eyeR = eyeR;
+
+    // Scar on left cheek
+    const scar = box(0.016, 0.10, 0.016, mats.scar);
+    scar.position.set(-0.13, 0.26, 0.18);
+    scar.rotation.z = 0.2;
+    headPivot.add(scar);
+
+    // ── Arms ─────────────────────────────────────────────
+    // Left shoulder pivot
+    const shoulderL = new THREE.Object3D();
+    shoulderL.position.set(-0.31, 0.28, 0.0);
+    torso.add(shoulderL);
+    root.userData.shoulderL = shoulderL;
+
+    const upperArmL = cyl(0.095, 0.085, 0.34, mats.jacket);
+    upperArmL.position.y = -0.17;
+    shoulderL.add(upperArmL);
+
+    const elbowL = new THREE.Object3D();
+    elbowL.position.y = -0.34;
+    shoulderL.add(elbowL);
+    root.userData.elbowL = elbowL;
+
+    const forearmL = cyl(0.082, 0.072, 0.30, mats.jacket);
+    forearmL.position.y = -0.15;
+    elbowL.add(forearmL);
+
+    const handL = sphere(0.09, mats.handGlow);
+    handL.position.y = -0.32;
+    elbowL.add(handL);
+    root.userData.handL = handL;
+
+    // Hand glow point light
+    const handLightL = new THREE.PointLight(0x7c3aed, 0, 1.8, 2);
+    handL.add(handLightL);
+    root.userData.handLightL = handLightL;
+
+    // Right shoulder pivot
+    const shoulderR = new THREE.Object3D();
+    shoulderR.position.set(0.31, 0.28, 0.0);
+    torso.add(shoulderR);
+    root.userData.shoulderR = shoulderR;
+
+    const upperArmR = cyl(0.095, 0.085, 0.34, mats.jacket);
+    upperArmR.position.y = -0.17;
+    shoulderR.add(upperArmR);
+
+    const elbowR = new THREE.Object3D();
+    elbowR.position.y = -0.34;
+    shoulderR.add(elbowR);
+    root.userData.elbowR = elbowR;
+
+    const forearmR = cyl(0.082, 0.072, 0.30, mats.jacket);
+    forearmR.position.y = -0.15;
+    elbowR.add(forearmR);
+
+    const handR = sphere(0.09, mats.handGlow);
+    handR.position.y = -0.32;
+    elbowR.add(handR);
+    root.userData.handR = handR;
+
+    const handLightR = new THREE.PointLight(0x7c3aed, 0, 1.8, 2);
+    handR.add(handLightR);
+    root.userData.handLightR = handLightR;
+
+    // ── Pelvis & Legs ─────────────────────────────────────
+    const pelvis = new THREE.Object3D();
+    pelvis.position.y = 0.45;
+    root.add(pelvis);
+
+    // Hip box
+    const hip = box(0.48, 0.18, 0.26, mats.trousers);
+    pelvis.add(hip);
+
+    // Left thigh pivot
+    const thighPivotL = new THREE.Object3D();
+    thighPivotL.position.set(-0.13, -0.09, 0.0);
+    pelvis.add(thighPivotL);
+    root.userData.thighL = thighPivotL;
+
+    const thighL = cyl(0.11, 0.09, 0.38, mats.trousers);
+    thighL.position.y = -0.19;
+    thighPivotL.add(thighL);
+
+    const kneeL = new THREE.Object3D();
+    kneeL.position.y = -0.38;
+    thighPivotL.add(kneeL);
+    root.userData.kneeL = kneeL;
+
+    const shinL = cyl(0.088, 0.075, 0.35, mats.trousers);
+    shinL.position.y = -0.175;
+    kneeL.add(shinL);
+
+    const bootL = box(0.18, 0.14, 0.28, mats.boots);
+    bootL.position.set(0, -0.38, 0.03);
+    kneeL.add(bootL);
+
+    // Right thigh pivot
+    const thighPivotR = new THREE.Object3D();
+    thighPivotR.position.set(0.13, -0.09, 0.0);
+    pelvis.add(thighPivotR);
+    root.userData.thighR = thighPivotR;
+
+    const thighR = cyl(0.11, 0.09, 0.38, mats.trousers);
+    thighR.position.y = -0.19;
+    thighPivotR.add(thighR);
+
+    const kneeR = new THREE.Object3D();
+    kneeR.position.y = -0.38;
+    thighPivotR.add(kneeR);
+    root.userData.kneeR = kneeR;
+
+    const shinR = cyl(0.088, 0.075, 0.35, mats.trousers);
+    shinR.position.y = -0.175;
+    kneeR.add(shinR);
+
+    const bootR = box(0.18, 0.14, 0.28, mats.boots);
+    bootR.position.set(0, -0.38, 0.03);
+    kneeR.add(bootR);
+
+    // Enable shadow on all meshes
+    root.traverse(obj => {
+      if (obj.isMesh) { obj.castShadow = true; obj.receiveShadow = true; }
+    });
+
+    return root;
+  }
+
+  // ── The actual character instance ─────────────────────────
+  const charRoot = buildCharacter();
+  charRoot.visible = false; // hidden until game starts
+  scene.add(charRoot);
+
+  // ── Animation state ────────────────────────────────────────
+  let _t = 0;
+  const CAST_LERP = 0.14;
+  let castBlend = 0; // 0=idle, 1=full cast pose
+  let walkBlend = 0;
+
+  // ── Pose the skeleton each frame ──────────────────────────
+  function animate(dt, state, moveDir, surfaceUp, cameraFwd) {
+    _t += dt;
+    const d = _t;
+    const u = charRoot.userData;
+
+    // State blends
+    const targetCast = (state === 'cast') ? 1 : 0;
+    const targetWalk = (state === 'walk') ? 1 : 0;
+    castBlend += (targetCast - castBlend) * 0.12;
+    walkBlend += (targetWalk - walkBlend) * 0.14;
+
+    // ── Walk cycle (applied to legs/arms) ──────────────────
+    const walkFreq = 5.5;
+    const walkPhase = Math.sin(d * walkFreq);
+    const walkAmp = walkBlend * 0.44;
+
+    // Thighs swing forward/back
+    u.thighL.rotation.x =  walkPhase * walkAmp;
+    u.thighR.rotation.x = -walkPhase * walkAmp;
+    // Knees bend on backswing (always positive)
+    u.kneeL.rotation.x = Math.max(0, -walkPhase) * walkAmp * 0.7;
+    u.kneeR.rotation.x = Math.max(0,  walkPhase) * walkAmp * 0.7;
+
+    // Torso slight counter-rotation
+    charRoot.children[0].rotation.y = walkPhase * walkBlend * 0.06; // torso yaw
+
+    // Idle breath bob
+    const breathAmp = (1 - walkBlend) * 0.018 + walkBlend * 0.008;
+    charRoot.children[0].position.y = 0.85 + Math.sin(d * 1.4) * breathAmp;
+    charRoot.children[1].position.y = 0.45 + Math.sin(d * 1.4) * breathAmp * 0.5;
+
+    // ── Arms ───────────────────────────────────────────────
+    const armSwingAmp = walkBlend * 0.32;
+    // Normal swing (counter to legs)
+    let shLRot = -walkPhase * armSwingAmp;
+    let shRRot =  walkPhase * armSwingAmp;
+
+    // Cast pose: arms raise forward and inward
+    const castRaise = castBlend * 0.85;
+    const castPulse = castBlend * Math.sin(d * 8) * 0.08;
+    shLRot -= castRaise + castPulse;
+    shRRot -= castRaise - castPulse;
+
+    u.shoulderL.rotation.x = shLRot;
+    u.shoulderR.rotation.x = shRRot;
+    // Elbow natural bend + cast bend
+    u.elbowL.rotation.x = -walkBlend * 0.28 - castBlend * 0.45;
+    u.elbowR.rotation.x = -walkBlend * 0.28 - castBlend * 0.45;
+    // Slight inward rotation when casting
+    u.shoulderL.rotation.z =  castBlend * 0.22 + 0.05;
+    u.shoulderR.rotation.z = -castBlend * 0.22 - 0.05;
+
+    // ── Hand glow ──────────────────────────────────────────
+    const glowInt = castBlend * (1.2 + Math.sin(d * 10) * 0.4);
+    u.handLightL.intensity = glowInt;
+    u.handLightR.intensity = glowInt;
+    mats.handGlow.emissiveIntensity = castBlend * 1.4;
+    mats.handGlow.emissive.setHex(castBlend > 0.1 ? 0x7c3aed : 0x2d1b69);
+
+    // ── Head slight look-at player movement dir ─────────────
+    const headTilt = walkBlend * Math.sin(d * walkFreq * 0.5) * 0.06;
+    u.headPivot.rotation.x = headTilt - castBlend * 0.15; // look up slightly when casting
+    u.headPivot.rotation.y = walkPhase * walkBlend * 0.08;
+
+    // ── Eye glow when casting ──────────────────────────────
+    const eyeGlow = castBlend * 0.9;
+    u.eyeL.material.emissiveIntensity = eyeGlow;
+    u.eyeR.material.emissiveIntensity = eyeGlow;
+  }
+
+  // Place and orient the character on the planet surface,
+  // facing in the moveDir (or forward if standing still).
+  function place(surfaceDir, forwardDir, state, moveDir, dt) {
+    charRoot.visible = true;
+    const up = surfaceDir.clone();
+    // Position: slightly sunk into surface so feet align
+    charRoot.position.copy(up).multiplyScalar(PLANET_R - 0.06);
+
+    // Build a rotation matrix: Y=up, Z=forward (facing direction)
+    let facing = forwardDir.clone();
+    // Re-orthogonalise facing against up
+    facing.addScaledVector(up, -facing.dot(up)).normalize();
+    if (facing.lengthSq() < 0.01) facing = new THREE.Vector3(1,0,0);
+    const right = new THREE.Vector3().crossVectors(up, facing).normalize();
+    // corrected fwd
+    const fwd = new THREE.Vector3().crossVectors(right, up).normalize();
+    const m4 = new THREE.Matrix4().makeBasis(right, up, fwd);
+    charRoot.quaternion.setFromRotationMatrix(m4);
+
+    // Animate the rig
+    animate(dt, state, moveDir, up, facing);
+  }
+
+  function hide() { charRoot.visible = false; }
+
+  return { place, hide, charRoot, mats };
+})();
+
+// ══════════════════════════════════════════════════════════════
+//  PROCEDURAL ENVIRONMENT — fully regenerated every startGame()
+//  so each run feels like a different shard. Seeded from Date.now
+//  for reproducibility within one session while varying between runs.
+// ══════════════════════════════════════════════════════════════
+const propLights = [];
+let envMeshes = [];   // track for cleanup on restart
+
+// Seeded-random (LCG) so the env is deterministic per seed
+let _rng = 0;
+function seedRng(s) { _rng = s >>> 0; }
+function rng() { _rng = (Math.imul(1664525, _rng) + 1013904223) >>> 0; return _rng / 0xffffffff; }
+function rngRange(lo, hi) { return lo + rng() * (hi - lo); }
+function rngChoice(arr) { return arr[Math.floor(rng() * arr.length)]; }
+
+// Return a random unit-sphere direction at least minAngle from exclusion
+function rngDir(minAngle, exclude) {
+  let v, tries = 0;
+  do {
+    const u = rng()*2-1, t = rng()*Math.PI*2;
+    const r = Math.sqrt(1-u*u);
+    v = new THREE.Vector3(Math.cos(t)*r, u, Math.sin(t)*r).normalize();
+    tries++;
+  } while (exclude && v.angleTo(exclude) < minAngle && tries < 30);
+  return v;
+}
+
+// Align an object to a surface point: given surface-normal (up), return quaternion
+function surfaceQuat(up) {
+  const arb = Math.abs(up.y) < 0.9 ? new THREE.Vector3(0,1,0) : new THREE.Vector3(1,0,0);
+  const right = new THREE.Vector3().crossVectors(arb, up).normalize();
+  const fwd = new THREE.Vector3().crossVectors(up, right).normalize();
+  return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(right, up, fwd));
+}
+
+// Shared materials (rebuilt on each env gen so colour varies per seed)
+let envMats = {};
+
+function buildEnv(seed) {
+  // Cleanup previous run
+  for (const m of envMeshes) {
+    if (m._light) { scene.remove(m._light); continue; }
+    if (m && m.parent) scene.remove(m);
+    m.geometry?.dispose(); m.material?.dispose();
+  }
+  envMeshes = [];
+  // Clear old prop lights (keep array, just empty it)
+  while (propLights.length) { const p = propLights.pop(); scene.remove(p.light); scene.remove(p.flame); }
+
+  seedRng(seed);
+
+  // Per-run tint — each shard has a slightly different stone colour
+  const stoneHue   = [0x241455, 0x1a2040, 0x2a1540, 0x1a3028, 0x302010][Math.floor(rng()*5)];
+  const crystalHue = [0x7c3aed, 0x0a7070, 0xcc5500, 0x006688, 0x884400][Math.floor(rng()*5)];
+  envMats.stone   = new THREE.MeshStandardMaterial({ color: stoneHue,   roughness: 0.75, metalness: 0.12 });
+  envMats.broken  = new THREE.MeshStandardMaterial({ color: stoneHue,   roughness: 0.85, metalness: 0.06 });
+  envMats.crystal = new THREE.MeshStandardMaterial({ color: crystalHue, roughness: 0.18, metalness: 0.55, emissive: crystalHue, emissiveIntensity: 0.35 });
+  envMats.bone    = new THREE.MeshStandardMaterial({ color: 0xd4c5a9,   roughness: 0.9,  metalness: 0.0  });
+  envMats.amber   = new THREE.MeshStandardMaterial({ color: 0xffb347,   roughness: 0.4,  metalness: 0.0, emissive: 0xffb347, emissiveIntensity: 2.2 });
+
+  function place(mesh, dir, radialOffset) {
+    const up = dir.clone();
+    mesh.position.copy(up).multiplyScalar(PLANET_R + radialOffset);
+    mesh.quaternion.copy(surfaceQuat(up));
+    mesh.castShadow = true; mesh.receiveShadow = true;
+    scene.add(mesh); envMeshes.push(mesh);
+    return mesh;
+  }
+
+  // ── 1. Lit torch pillars (4-7, Fibonacci-spaced) ─────────────
+  const nPillars = 4 + Math.floor(rng() * 4);
+  const golden = Math.PI * (3 - Math.sqrt(5));
+  for (let i = 0; i < nPillars; i++) {
+    const y = 1 - (i / (nPillars - 1)) * 2;
+    const r2 = Math.sqrt(1-y*y);
+    const theta = golden * i + rng() * 0.4;
+    const dir = new THREE.Vector3(Math.cos(theta)*r2, y, Math.sin(theta)*r2).normalize();
+    const h = rngRange(4.5, 8.5);
+    // Main shaft
+    const shaft = new THREE.Mesh(new THREE.BoxGeometry(1.6, h, 1.6), envMats.stone);
+    place(shaft, dir, h/2);
+    // Cap
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.8, 2.2), envMats.stone);
+    place(cap, dir, h);
+    // Broken tip (random tilt)
+    if (rng() < 0.55) {
+      const tip = new THREE.Mesh(new THREE.BoxGeometry(1.4, rngRange(1,3.5), 1.4), envMats.broken);
+      tip.position.copy(dir).multiplyScalar(PLANET_R + h + rngRange(0.4,2.2));
+      tip.quaternion.copy(surfaceQuat(dir));
+      tip.rotateX(rngRange(-0.5,0.5)); tip.rotateZ(rngRange(-0.5,0.5));
+      scene.add(tip); envMeshes.push(tip);
+    }
+    // Flame + light
+    const flame = new THREE.Mesh(new THREE.SphereGeometry(0.5, 8, 8), envMats.amber.clone());
+    flame.position.copy(dir).multiplyScalar(PLANET_R + h + 0.8);
+    scene.add(flame); envMeshes.push(flame);
+    const light = new THREE.PointLight(0xff9433, 2.6, 42, 1.4);
+    light.position.copy(flame.position);
+    scene.add(light);
+    propLights.push({ flame, light, phase: i * 1.7 + rng() * 2 });
+  }
+
+  // ── 2. Crystal clusters (3-6 groupings) ──────────────────────
+  const nClusters = 3 + Math.floor(rng() * 4);
+  for (let c = 0; c < nClusters; c++) {
+    const clusterDir = rngDir(0, null);
+    const nSpires = 3 + Math.floor(rng() * 5);
+    for (let s = 0; s < nSpires; s++) {
+      const pertDir = clusterDir.clone()
+        .addScaledVector(new THREE.Vector3(rng()-0.5, rng()-0.5, rng()-0.5).normalize(), 0.15)
+        .normalize();
+      const h = rngRange(1.2, 4.5);
+      const w = rngRange(0.3, 0.9);
+      const spire = new THREE.Mesh(new THREE.ConeGeometry(w, h, 5+Math.floor(rng()*4)), envMats.crystal);
+      spire.position.copy(pertDir).multiplyScalar(PLANET_R + h/2);
+      spire.quaternion.copy(surfaceQuat(pertDir));
+      spire.rotateX(rngRange(-0.25, 0.25));
+      scene.add(spire); envMeshes.push(spire);
+    }
+    // Faint crystal glow light
+    const cl = new THREE.PointLight(crystalHue, 0.8, 18, 2);
+    cl.position.copy(clusterDir).multiplyScalar(PLANET_R + 3);
+    scene.add(cl); envMeshes.push({ isLight: true, geometry: null, material: null });
+    // (lights don't have geometry/material — track separately)
+    envMeshes.push({ dispose: () => scene.remove(cl) });
+    // actually just add it directly to remove list
+    envMeshes[envMeshes.length-1] = { _light: cl };
+  }
+
+  // ── 3. Scattered boulders (8-14) ─────────────────────────────
+  const nBoulders = 8 + Math.floor(rng() * 7);
+  for (let b = 0; b < nBoulders; b++) {
+    const dir = rngDir(0, null);
+    const sx = rngRange(0.6, 2.8), sy = rngRange(0.4, 2.0), sz = rngRange(0.5, 2.5);
+    const boulder = new THREE.Mesh(
+      new THREE.DodecahedronGeometry(1, Math.floor(rng()*2)),
+      rng() < 0.2 ? envMats.crystal : envMats.stone
+    );
+    boulder.scale.set(sx, sy, sz);
+    boulder.position.copy(dir).multiplyScalar(PLANET_R + sy * 0.45);
+    boulder.quaternion.copy(surfaceQuat(dir));
+    boulder.rotateY(rng() * Math.PI * 2);
+    scene.add(boulder); envMeshes.push(boulder);
+  }
+
+  // ── 4. Ruined arch pairs (1-3) ───────────────────────────────
+  const nArches = 1 + Math.floor(rng() * 3);
+  for (let a = 0; a < nArches; a++) {
+    const dir = rngDir(0, null);
+    const up = dir.clone();
+    const q = surfaceQuat(up);
+    const archR = rngRange(2.8, 5.5), tube = rngRange(0.5, 1.1);
+    const arch = new THREE.Mesh(new THREE.TorusGeometry(archR, tube, 7, 16, Math.PI), envMats.broken);
+    arch.position.copy(dir).multiplyScalar(PLANET_R + archR * 0.9);
+    arch.quaternion.copy(q);
+    arch.rotateX(Math.PI); // open side down toward planet
+    scene.add(arch); envMeshes.push(arch);
+  }
+
+  // ── 5. Bone piles (5-9) ──────────────────────────────────────
+  const nBones = 5 + Math.floor(rng() * 5);
+  for (let b = 0; b < nBones; b++) {
+    const dir = rngDir(0, null);
+    const nPcs = 3 + Math.floor(rng() * 4);
+    for (let p = 0; p < nPcs; p++) {
+      const pd = dir.clone()
+        .addScaledVector(new THREE.Vector3(rng()-0.5, rng()-0.5, rng()-0.5).normalize(), 0.12)
+        .normalize();
+      const len = rngRange(0.3, 1.4);
+      const bone = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.1, 0.15, len, 5),
+        envMats.bone);
+      bone.position.copy(pd).multiplyScalar(PLANET_R + 0.12);
+      bone.quaternion.copy(surfaceQuat(pd));
+      bone.rotateX(rngRange(0, Math.PI));
+      bone.rotateZ(rngRange(-0.8, 0.8));
+      scene.add(bone); envMeshes.push(bone);
+    }
+  }
+
+  // ── 6. Floating shard debris (2-4 small rocks orbiting close) ─
+  const nDebris = 2 + Math.floor(rng() * 3);
+  for (let d = 0; d < nDebris; d++) {
+    const dir = rngDir(0, null);
+    const debris = new THREE.Mesh(
+      new THREE.DodecahedronGeometry(rngRange(0.3, 1.2), 0),
+      envMats.stone
+    );
+    // Orbit 3-7 units above the surface
+    debris.position.copy(dir).multiplyScalar(PLANET_R + rngRange(3, 7));
+    debris.userData.orbitAxis = dir.clone();
+    debris.userData.orbitSpeed = rngRange(0.15, 0.4) * (rng() < 0.5 ? 1 : -1);
+    debris.userData.orbitAngle = rng() * Math.PI * 2;
+    scene.add(debris); envMeshes.push(debris);
+  }
+}
+
+// Called from startGame() and animated each frame
+function tickEnv(dt) {
+  for (const m of envMeshes) {
+    if (m && m.userData && m.userData.orbitAxis) {
+      m.userData.orbitAngle += m.userData.orbitSpeed * dt;
+      const q = new THREE.Quaternion().setFromAxisAngle(m.userData.orbitAxis, m.userData.orbitSpeed * dt);
+      m.position.applyQuaternion(q);
+    }
+  }
+}
+
+// Initial build (will be rebuilt with fresh seed on each startGame)
+buildEnv(Date.now());
+
+// ── Player + boss shadow-pool visual marker (glowing ring) ───
+const poolRingGeo = new THREE.RingGeometry(1.6, 2.1, 24);
+const poolRingMat = new THREE.MeshBasicMaterial({ color: 0xfbbf24, transparent: true, opacity: 0.85, side: THREE.DoubleSide });
+const poolRing = new THREE.Mesh(poolRingGeo, poolRingMat);
+poolRing.visible = false;
+scene.add(poolRing);
+
+// ══════════════════ MATH HELPERS ══════════════════
+function orientBillboard(mesh, up, camPos) {
+  const toCam = camPos.clone().sub(mesh.position);
+  toCam.addScaledVector(up, -toCam.dot(up) * 0); // keep full toCam (cylindrical-ish billboard)
+  toCam.normalize();
+  let right = new THREE.Vector3().crossVectors(up, toCam);
+  if (right.lengthSq() < 1e-6) right = new THREE.Vector3(1,0,0);
+  right.normalize();
+  const fwd = new THREE.Vector3().crossVectors(right, up).normalize();
+  const basis = new THREE.Matrix4().makeBasis(right, up, fwd);
+  mesh.quaternion.setFromRotationMatrix(basis);
+}
+
+function angularDist(a, b) {
+  return a.angleTo(b);
+}
+
+
+// ══════════════════════════════════════════════════════════════
+//  ABILITY VFX SYSTEM
+//  Inspired by LinearAbilityCasting techniques.
+//  Each ability spawns a self-managed Three.js effect that ticks
+//  each frame and auto-disposes when its lifetime ends.
+// ══════════════════════════════════════════════════════════════
+const VFX = (() => {
+  const activeEffects = [];
+
+  // ── Shared geometries reused across effects ──────────────
+  function makeTube(points, radius, segments) {
+    const curve = new THREE.CatmullRomCurve3(points);
+    return new THREE.TubeGeometry(curve, segments || 12, radius, 5, false);
+  }
+
+  // ── 1. IMPAIR BOLT — Lightning ribbon from player to target ──
+  // Inspired by LinearAbilityCasting's Storm Lance: a kinked
+  // tube of crackling electricity that forks toward the target.
+  function spawnImpairBolt(fromDir, toDir) {
+    const group = new THREE.Group();
+    scene.add(group);
+
+    const fromPos = fromDir.clone().multiplyScalar(PLANET_R + 1.8);
+    const toPos   = toDir.clone().multiplyScalar(PLANET_R + 1.8);
+    const mid     = fromPos.clone().lerp(toPos, 0.5);
+    const midLen  = mid.length();
+
+    // Core bolt — 3-segment kinked tube
+    const kink1 = mid.clone().normalize().multiplyScalar(midLen)
+      .add(new THREE.Vector3((Math.random()-0.5)*3, (Math.random()-0.5)*3, (Math.random()-0.5)*3));
+    const kink2 = mid.clone().normalize().multiplyScalar(midLen * 0.8)
+      .add(new THREE.Vector3((Math.random()-0.5)*2, (Math.random()-0.5)*2, (Math.random()-0.5)*2));
+
+    const boltMat = new THREE.MeshBasicMaterial({ color: 0xc4b5fd, transparent: true, opacity: 0.92 });
+    const boltGeo = makeTube([fromPos, kink1, kink2, toPos], 0.06, 16);
+    const bolt = new THREE.Mesh(boltGeo, boltMat);
+    group.add(bolt);
+
+    // Glow tube (wider, additive)
+    const glowMat = new THREE.MeshBasicMaterial({ color: 0x7c3aed, transparent: true, opacity: 0.35, depthWrite: false });
+    const glowGeo = makeTube([fromPos, kink1, kink2, toPos], 0.18, 10);
+    const glow = new THREE.Mesh(glowGeo, glowMat);
+    group.add(glow);
+
+    // Fork — a secondary thinner bolt branching at kink1
+    const forkEnd = kink1.clone().add(new THREE.Vector3(
+      (Math.random()-0.5)*4, (Math.random()-0.5)*4, (Math.random()-0.5)*4));
+    const forkMat = new THREE.MeshBasicMaterial({ color: 0xe9d5ff, transparent: true, opacity: 0.6 });
+    const forkGeo = makeTube([kink1, forkEnd], 0.03, 8);
+    const fork = new THREE.Mesh(forkGeo, forkMat);
+    group.add(fork);
+
+    // Impact sphere at target
+    const impactGeo = new THREE.SphereGeometry(0.32, 8, 6);
+    const impactMat = new THREE.MeshBasicMaterial({ color: 0xc4b5fd, transparent: true, opacity: 0.8, wireframe: true });
+    const impact = new THREE.Mesh(impactGeo, impactMat);
+    impact.position.copy(toPos);
+    group.add(impact);
+
+    // Point light flash at target
+    const flash = new THREE.PointLight(0xc4b5fd, 4.0, 12, 2);
+    flash.position.copy(toPos);
+    group.add(flash);
+
+    const life = { total: 0.55, remaining: 0.55 };
+    activeEffects.push({ group, life,
+      tick(dt) {
+        const t = 1 - life.remaining / life.total;
+        const fade = 1 - t * t;
+        boltMat.opacity  = 0.92 * fade;
+        glowMat.opacity  = 0.35 * fade;
+        forkMat.opacity  = 0.6  * fade;
+        impactMat.opacity= 0.8  * fade;
+        flash.intensity  = 4.0  * fade;
+        impact.scale.setScalar(1 + t * 1.8);
+        impact.rotation.y += dt * 6;
+        // Flicker the bolt by jiggling its material colour
+        if (Math.random() < 0.25) boltMat.color.setHex(Math.random() < 0.5 ? 0xc4b5fd : 0xffffff);
+      }
+    });
+  }
+
+  // ── 2. EXTRACT SHIMMER — Crystal eruption at target ─────────
+  // Inspired by LinearAbilityCasting's Frost Expanse / ice spires.
+  // A cluster of thin cone spires erupts from the target position,
+  // with an expanding ring and upward particle trail.
+  function spawnExtractShimmer(targetDir) {
+    const group = new THREE.Group();
+    scene.add(group);
+
+    const origin = targetDir.clone().multiplyScalar(PLANET_R + 0.1);
+    const up     = targetDir.clone();
+
+    // Build a local basis aligned to the surface normal
+    const arb = Math.abs(up.y) < 0.9 ? new THREE.Vector3(0,1,0) : new THREE.Vector3(1,0,0);
+    const right = new THREE.Vector3().crossVectors(arb, up).normalize();
+    const fwd   = new THREE.Vector3().crossVectors(up, right).normalize();
+
+    const NUM_SPIRES = 9;
+    const spires = [];
+    for (let i = 0; i < NUM_SPIRES; i++) {
+      const ang = (i / NUM_SPIRES) * Math.PI * 2 + Math.random() * 0.4;
+      const r   = 0.4 + Math.random() * 0.8;
+      const h   = 1.0 + Math.random() * 2.0;
+      const tilt= 0.1 + Math.random() * 0.35;
+      const spireGeo = new THREE.ConeGeometry(0.08 + Math.random()*0.06, h, 5);
+      const col = Math.random() < 0.5 ? 0xc4b5fd : 0x7c3aed;
+      const spireMat = new THREE.MeshStandardMaterial({
+        color: col, emissive: col, emissiveIntensity: 1.4,
+        transparent: true, opacity: 0, roughness: 0.2, metalness: 0.5
+      });
+      const spire = new THREE.Mesh(spireGeo, spireMat);
+      // Position around the origin in surface-tangent space
+      spire.position.copy(origin)
+        .addScaledVector(right, Math.cos(ang) * r)
+        .addScaledVector(fwd,   Math.sin(ang) * r);
+      // Orient: point roughly along up + random tilt
+      const spireUp = up.clone()
+        .addScaledVector(right, Math.sin(ang) * tilt)
+        .addScaledVector(fwd,   Math.cos(ang) * tilt)
+        .normalize();
+      spire.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), spireUp);
+      spire.scale.y = 0.01; // start flat, will erupt upward
+      group.add(spire);
+      spires.push({ mesh: spire, mat: spireMat, delay: i * 0.04, targetH: 1.0 });
+    }
+
+    // Expanding ring on surface
+    const ringGeo = new THREE.RingGeometry(0.05, 0.25, 24);
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0xc4b5fd, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false });
+    const ring = new THREE.Mesh(ringGeo, ringMat);
+    ring.position.copy(origin);
+    ring.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1), up);
+    group.add(ring);
+
+    // Central light burst
+    const burst = new THREE.PointLight(0xc4b5fd, 3.5, 10, 2);
+    burst.position.copy(origin).addScaledVector(up, 1.0);
+    group.add(burst);
+
+    const life = { total: 1.4, remaining: 1.4, elapsed: 0 };
+    activeEffects.push({ group, life,
+      tick(dt) {
+        life.elapsed += dt;
+        const t   = life.elapsed / life.total;
+        const fade = t < 0.6 ? 1.0 : 1 - (t - 0.6) / 0.4;
+
+        // Spires erupt in sequence
+        spires.forEach(sp => {
+          const localT = Math.max(0, (life.elapsed - sp.delay) / 0.35);
+          const erupt  = Math.min(1, localT);
+          sp.mesh.scale.y = erupt;
+          sp.mat.opacity  = erupt * fade;
+          sp.mat.emissiveIntensity = 1.4 * fade;
+        });
+
+        // Ring expands outward
+        const rScale = 1 + t * 5;
+        ring.scale.setScalar(rScale);
+        ringMat.opacity = Math.max(0, 0.9 * (1 - t * 1.5));
+
+        burst.intensity = 3.5 * (1 - t);
+      }
+    });
+  }
+
+  // ── 3. SUMMON/RALLY COLUMN — Rising void pillar ─────────────
+  // Inspired by LinearAbilityCasting's Voltaic Snare: a column of
+  // energy rises from the player's position, with orbiting rings
+  // and upward-streaming particles encoded as instanced quads.
+  function spawnSummonColumn(playerDir) {
+    const group = new THREE.Group();
+    scene.add(group);
+
+    const base = playerDir.clone().multiplyScalar(PLANET_R + 0.1);
+    const up   = playerDir.clone();
+
+    // Column shaft — thin cylinder along up
+    const colH  = 5.5;
+    const colGeo = new THREE.CylinderGeometry(0.08, 0.35, colH, 8, 1, true);
+    const colMat = new THREE.MeshBasicMaterial({
+      color: 0x7c3aed, transparent: true, opacity: 0.55,
+      depthWrite: false, side: THREE.DoubleSide
+    });
+    const col = new THREE.Mesh(colGeo, colMat);
+    col.position.copy(base).addScaledVector(up, colH * 0.5);
+    col.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), up);
+    group.add(col);
+
+    // Outer glow column (wider, very transparent)
+    const outerGeo = new THREE.CylinderGeometry(0.55, 0.9, colH, 8, 1, true);
+    const outerMat = new THREE.MeshBasicMaterial({
+      color: 0x5b21b6, transparent: true, opacity: 0.18,
+      depthWrite: false, side: THREE.DoubleSide
+    });
+    const outer = new THREE.Mesh(outerGeo, outerMat);
+    outer.position.copy(base).addScaledVector(up, colH * 0.5);
+    outer.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), up);
+    group.add(outer);
+
+    // Orbiting rings (3 rings at different heights, spin around up axis)
+    const rings = [];
+    for (let i = 0; i < 3; i++) {
+      const rGeo = new THREE.TorusGeometry(0.55 + i * 0.18, 0.035, 6, 24);
+      const rMat = new THREE.MeshBasicMaterial({
+        color: i === 0 ? 0xc4b5fd : i === 1 ? 0x7c3aed : 0xfbbf24,
+        transparent: true, opacity: 0.85, depthWrite: false
+      });
+      const ring = new THREE.Mesh(rGeo, rMat);
+      ring.position.copy(base).addScaledVector(up, 0.8 + i * 1.6);
+      ring.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), up);
+      group.add(ring);
+      rings.push({ mesh: ring, mat: rMat, speed: (i + 1) * 1.8 * (i % 2 === 0 ? 1 : -1) });
+    }
+
+    // Ground burst ring
+    const groundRingGeo = new THREE.RingGeometry(0.1, 1.6, 32);
+    const groundRingMat = new THREE.MeshBasicMaterial({
+      color: 0x7c3aed, transparent: true, opacity: 0.7,
+      side: THREE.DoubleSide, depthWrite: false
+    });
+    const groundRing = new THREE.Mesh(groundRingGeo, groundRingMat);
+    groundRing.position.copy(base).addScaledVector(up, 0.02);
+    groundRing.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1), up);
+    group.add(groundRing);
+
+    // Central point light
+    const light = new THREE.PointLight(0x7c3aed, 5.0, 16, 1.8);
+    light.position.copy(base).addScaledVector(up, 1.5);
+    group.add(light);
+
+    // Top burst sphere
+    const topGeo  = new THREE.SphereGeometry(0.3, 10, 8);
+    const topMat  = new THREE.MeshBasicMaterial({ color: 0xc4b5fd, transparent: true, opacity: 0.9 });
+    const top     = new THREE.Mesh(topGeo, topMat);
+    top.position.copy(base).addScaledVector(up, colH + 0.2);
+    group.add(top);
+
+    const life = { total: 1.8, remaining: 1.8, elapsed: 0 };
+    activeEffects.push({ group, life,
+      tick(dt) {
+        life.elapsed += dt;
+        const t    = life.elapsed / life.total;
+        const rise = Math.min(1, t * 2.5);           // column rises in first 0.4s
+        const fade = t < 0.7 ? 1 : 1 - (t-0.7)/0.3; // fade last 30%
+
+        col.scale.y   = rise;
+        outer.scale.y = rise;
+        colMat.opacity  = 0.55 * fade;
+        outerMat.opacity= 0.18 * fade;
+
+        rings.forEach(r => {
+          r.mesh.rotation.y += r.speed * dt;
+          r.mat.opacity = 0.85 * fade * Math.min(1, life.elapsed * 4);
+        });
+
+        groundRingMat.opacity = 0.7 * (1 - t);
+        groundRing.scale.setScalar(1 + t * 2);
+
+        light.intensity = 5.0 * (1 - t * 0.7);
+        topMat.opacity  = 0.9 * fade;
+        top.scale.setScalar(1 + t * 0.8);
+      }
+    });
+  }
+
+  // ── Global tick (called every frame) ─────────────────────
+  function tick(dt) {
+    for (const fx of activeEffects) {
+      fx.life.remaining -= dt;
+      fx.tick(dt);
+    }
+    // Dispose expired effects
+    for (let i = activeEffects.length - 1; i >= 0; i--) {
+      if (activeEffects[i].life.remaining <= 0) {
+        const fx = activeEffects[i];
+        scene.remove(fx.group);
+        fx.group.traverse(obj => {
+          if (obj.isMesh) { obj.geometry.dispose(); obj.material.dispose(); }
+        });
+        activeEffects.splice(i, 1);
+      }
+    }
+  }
+
+  return { spawnImpairBolt, spawnExtractShimmer, spawnSummonColumn, tick };
+})();
+
+// ══════════════════ ENTITY BILLBOARD SYSTEM ══════════════════
+const entityMeshes = new Map();
+
+function getRec(id, texW, texH, worldW, worldH) {
+  let rec = entityMeshes.get(id);
+  if (!rec) {
+    const { c: cnv, ctx: cctx } = makeCanvas(texW, texH);
+    const tex = new THREE.CanvasTexture(cnv);
+    tex.encoding = THREE.sRGBEncoding;
+    tex.magFilter = THREE.NearestFilter;
+    tex.minFilter = THREE.NearestFilter;
+    const mat = new THREE.MeshStandardMaterial({
+      map: tex, transparent: true, alphaTest: 0.08,
+      side: THREE.DoubleSide, roughness: 0.95, metalness: 0.0
+    });
+    const geo = new THREE.PlaneGeometry(worldW, worldH);
+    geo.translate(0, worldH/2, 0); // shift origin to bottom edge (feet)
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.castShadow = true; mesh.receiveShadow = false;
+    scene.add(mesh);
+    rec = { canvas: cnv, ctx: cctx, texture: tex, mesh, texW, texH };
+    entityMeshes.set(id, rec);
+  }
+  return rec;
+}
+
+// dir: unit vector = position on planet surface. drawFn draws the
+// sprite onto a small offscreen canvas (reusing S.* functions).
+function syncEntity(id, texW, texH, worldW, worldH, dir, drawFn, frame) {
+  const rec = getRec(id, texW, texH, worldW, worldH);
+  // Sprite functions don't all place feet at an identical distance from
+  // their anchor point (Al Von Kan's boots sit closer to the anchor than
+  // a skeleton's), which left a visible "hover" gap for some characters.
+  // A small proportional sink-in compensates without needing per-sprite
+  // tuning or risking clipped feet by shrinking the canvas margin.
+  const surfacePoint = dir.clone().multiplyScalar(PLANET_R - worldH * 0.055);
+  rec.mesh.position.copy(surfacePoint);
+  orientBillboard(rec.mesh, dir, camera.position);
+  if (frame % 2 === 0) {
+    rec.ctx.clearRect(0, 0, texW, texH);
+    drawFn(rec.ctx, texW/2, texH - 30);
+    rec.texture.needsUpdate = true;
+  }
+  return rec.mesh;
+}
+
+function pruneStale(activeIds) {
+  for (const [id, rec] of entityMeshes) {
+    if (!activeIds.has(id)) {
+      scene.remove(rec.mesh);
+      rec.mesh.geometry.dispose();
+      rec.mesh.material.dispose();
+      rec.texture.dispose();
+      entityMeshes.delete(id);
+    }
+  }
+}
+
+// Project a world position to fx-canvas screen pixel coords
+function worldToScreen(worldPos) {
+  const v = worldPos.clone().project(camera);
+  return {
+    x: (v.x * 0.5 + 0.5) * fxCanvas.width,
+    y: (1 - (v.y * 0.5 + 0.5)) * fxCanvas.height,
+    behind: v.z > 1
+  };
+}
+
+
+// ══════════════════ GAME STATE ══════════════════
+const G = {
+  running: false, frame: 0, wave: 1, kills: 0, score: 0,
+  screenShake: 0, screenShakeAmt: 0,
+  bossActive: false, bossDefeated: false, _bossFlicker: false,
+
+  player: {
+    dir: new THREE.Vector3(0, 1, 0),
+    forward: new THREE.Vector3(1, 0, 0),
+    hp: 100, maxHp: 100, mana: 90, maxMana: 90,
+    state: 'idle', moving: false,
+    // facing: 'front' = facing camera, 'back' = facing away, 'left'/'right' = side
+    // Used to choose sprite variant and horizontal flip
+    facing: 'front',
+    facingFlip: false,  // mirror sprite horizontally
+  },
+
+  enemies: [], shadows: [], boss: null,
+  bossPhase: 'corporeal', bossPhaseTimer: 0, bossPhaseAlpha: 0,
+  bossShadowPool: null,
+  BOSS_CORPOREAL_TICKS: 480, BOSS_SHADOW_TICKS: 240,
+
+  currentTarget: null,
+  extractedTypes: [],
+  manaRegenTimer: 0, enemyAttackTimer: 0, shadowAttackTimer: 0,
+  particles: [], floatTexts: [],
+  waveBeating: false,
+  manaShardsOnGround: [],  // {dir, amount, life, id} — collectible drops
+  rallyTimer: 0,           // cooldown frames remaining
+  RALLY_COOLDOWN: 720,     // 12s at 60fps
+  aggroBonus: false,       // player within aggro range of an enemy
+  MOVE_SPEED: 9.2,
+  // Enemy behaviour variant tags: 'rusher' (fast/fragile), 'ranger' (hangs back + projectile), 'pack' (melee buffer)
+  // Applied on spawn based on wave number
+
+  waveConfig: [
+    [],
+    [{type:'skeleton',count:4}],
+    [{type:'skeleton',count:3},{type:'goblin',count:2}],
+    [{type:'goblin',count:3},{type:'skeleton',count:3}],
+    [{type:'wolf',count:3},{type:'goblin',count:2}],
+    [{type:'wolf',count:3},{type:'goblin',count:3},{type:'skeleton',count:2}],
+    [{type:'wolf',count:4},{type:'goblin',count:3},{type:'skeleton',count:3}],
+    'BOSS',
+    [{type:'wolf',count:4},{type:'goblin',count:3}],
+    [{type:'wolf',count:5},{type:'goblin',count:4},{type:'skeleton',count:3}],
+    [{type:'wolf',count:6},{type:'goblin',count:4},{type:'skeleton',count:4}],
+  ],
+
+  enemyStats: {
+    skeleton:{ hp:30,maxHp:30,speed:5.2,atk:5,impairCost:18,extractCost:22,value:10 },
+    goblin:  { hp:45,maxHp:45,speed:6.4,atk:7,impairCost:22,extractCost:28,value:15 },
+    wolf:    { hp:65,maxHp:65,speed:8.6,atk:10,impairCost:28,extractCost:35,value:20 },
+  },
+  shadowStats: {
+    skeleton:{ atk:9,  speed:7.0,  label:'Bone Warrior',  summonCost:15 },
+    goblin:  { atk:13, speed:8.4,  label:'Shadow Raider',  summonCost:18 },
+    wolf:    { atk:17, speed:11.0, label:'Shadow Wolf',    summonCost:22 },
+    dmagno:  { atk:26, speed:14.0, label:'Deimian Magno',  summonCost:34 },
+  },
+  MAX_SHADOWS: 8,
+
+  // ── Init ─────────────────────────────────────────────
+  startGame() {
+    Audio.init();
+    document.getElementById('screen-overlay').style.display = 'none';
+    this.running = true; this.wave = 1; this.kills = 0; this.score = 0;
+    this.screenShake = 0; this.screenShakeAmt = 0;
+    this.player.hp = this.player.maxHp; this.player.mana = this.player.maxMana;
+    this.player.dir.set(0, 1, 0);
+    this.player.forward.set(1, 0, 0);
+    this.player.facing = 'front'; this.player.facingFlip = false;
+    this.enemies = []; this.shadows = []; this.boss = null;
+    this.extractedTypes = []; this.floatTexts = []; this.particles = [];
+    this.manaShardsOnGround = []; this.rallyTimer = 0; this.aggroBonus = false;
+    this.currentTarget = null;
+    this.bossActive = false; this.bossDefeated = false; this._bossFlicker = false;
+    this.bossShadowPool = null; this.bossPhase = 'corporeal';
+    document.getElementById('boss-bar-wrap').classList.remove('visible');
+    document.getElementById('boss-intro').classList.remove('visible');
+    buildEnv(Date.now()); // regenerate world each run
+    this.updateRoster();
+    this.spawnWave();
+    this.log('Al Von Kan opens his eyes. The ground curves beneath him.', true);
+    this.log('Cold light pulses in your palms.');
+  },
+
+  // Random unit vector at least minAngle away from the player
+  randomFarDir(minAngle) {
+    let d;
+    let tries = 0;
+    do {
+      d = new THREE.Vector3(Math.random()*2-1, Math.random()*2-1, Math.random()*2-1).normalize();
+      tries++;
+    } while (d.angleTo(this.player.dir) < minAngle && tries < 30);
+    return d;
+  },
+
+  spawnWave() {
+    this.waveBeating = true;
+    const cfg = this.waveConfig[Math.min(this.wave, this.waveConfig.length-1)];
+
+    if (cfg === 'BOSS') {
+      document.getElementById('wave-number').textContent = '⚔';
+      document.getElementById('boss-intro').classList.add('visible');
+      this.waveBeating = false;
+      return;
+    }
+
+    for (const c of cfg) {
+      for (let i = 0; i < c.count; i++) {
+        const st = {...this.enemyStats[c.type]};
+        const dir = this.randomFarDir(0.55);
+        // Behaviour variants: wave 3+ randomly assign rusher/ranger/pack
+        let variant = 'normal';
+        if (this.wave >= 3) {
+          const r = Math.random();
+          if (r < 0.25)      variant = 'rusher';  // fast, low hp
+          else if (r < 0.48) variant = 'ranger';  // hangs back, shoots
+          else if (r < 0.64) variant = 'pack';    // slow but buffs adjacent
+        }
+        const hpMod   = variant==='rusher' ? 0.6  : variant==='ranger' ? 0.85 : 1.0;
+        const spdMod  = variant==='rusher' ? 1.65 : variant==='ranger' ? 0.55 : variant==='pack' ? 0.75 : 1.0;
+        const atkMod  = variant==='rusher' ? 0.8  : variant==='ranger' ? 1.1  : variant==='pack' ? 1.3  : 1.0;
+        const finalHp = Math.ceil(st.hp * hpMod);
+        this.enemies.push({
+          type: c.type, dir, hp: finalHp, maxHp: finalHp,
+          speed: st.speed * spdMod, atk: Math.ceil(st.atk * atkMod),
+          impairCost: st.impairCost, extractCost: st.extractCost, value: st.value,
+          impaired: false, impaireTimer: 0,
+          variant,
+          rangerCooldown: 0,   // for ranger projectile timing
+          id: Date.now() + i + Math.random()
+        });
+      }
+    }
+    document.getElementById('wave-number').textContent = this.wave;
+    this.log(`Wave ${this.wave} — they come.`, true);
+  },
+
+  startBossFight() {
+    document.getElementById('boss-intro').classList.remove('visible');
+    this.waveBeating = true; this.bossActive = true; this.bossDefeated = false;
+    this.bossPhase = 'corporeal'; this.bossPhaseTimer = this.BOSS_CORPOREAL_TICKS;
+    this.bossPhaseAlpha = 0;
+    this.boss = {
+      type: 'dmagno', dir: this.randomFarDir(1.1),
+      hp: 300, maxHp: 300, atk: 18, shadowAtk: 28, speed: 9.5,
+      impairCost: 35, impaired: false, impaireTimer: 0,
+    };
+    document.getElementById('boss-bar-wrap').classList.add('visible');
+    document.getElementById('wave-number').textContent = '⚔';
+    Audio.startBossMusic();
+    this._bossFlicker = true;
+    this.log('The ground trembles. Deimian Magno steps from the dark.', true);
+    this.log('Watch for the amber ring — impair only during Corporeal phase.');
+  },
+
+  // ── Targeting ────────────────────────────────────────────
+  updateTarget() {
+    let best = null, bestAng = Infinity;
+    const pool = this.boss ? [...this.enemies, this.boss] : this.enemies;
+    for (const e of pool) {
+      const a = e.dir.angleTo(this.player.dir);
+      if (a < bestAng) { bestAng = a; best = e; }
+    }
+    this.currentTarget = (best && bestAng < 0.5) ? best : null;
+  },
+
+  // ── Combat actions ──────────────────────────────────────
+  doImpair() {
+    const e = this.currentTarget;
+    if (!e) { this.log('No target in range.'); return; }
+    if (e === this.boss) {
+      if (this.bossPhase !== 'corporeal') { this.log('Deimian Magno is phased — wait for Corporeal window!'); return; }
+      if (e.impaired) return;
+      if (this.player.mana < e.impairCost) { this.log('Mana insufficient.'); return; }
+      this.player.mana -= e.impairCost;
+      e.impaired = true; e.impaireTimer = 200;
+      this.bossPhaseTimer = this.BOSS_CORPOREAL_TICKS;
+      Audio.sfxImpair();
+      VFX.spawnImpairBolt(this.player.dir, e.dir);
+      this.player.state = 'cast'; setTimeout(()=>{ if(this.player.state==='cast') this.player.state='idle'; }, 800);
+      this.spawnManaFX(e.dir, 22);
+      this.log('Deimian Magno is impaired — shadows closing!', true);
+      this.log('Let your army finish him — then walk to the pool!');
+      return;
+    }
+    if (e.impaired) return;
+    if (this.player.mana < e.impairCost) { this.log('Mana insufficient.'); return; }
+    this.player.mana -= e.impairCost;
+    e.impaired = true; e.impaireTimer = 310;
+    Audio.sfxImpair();
+    VFX.spawnImpairBolt(this.player.dir, e.dir);
+    this.player.state = 'cast'; setTimeout(()=>{ if(this.player.state==='cast') this.player.state='idle'; }, 800);
+    this.spawnManaFX(e.dir, 16);
+    this.log(`${e.type} is bound. Shadows take hold.`);
+  },
+
+  doExtract() {
+    const e = this.currentTarget;
+    if (!e) { this.log('No target in range.'); return; }
+    if (e === this.boss) { this.log('Deimian Magno cannot be manually extracted. Defeat him, then walk to the pool.'); return; }
+    if (!e.impaired) { this.log('Must impair before extracting.'); return; }
+    if (this.player.mana < e.extractCost) { this.log('Mana insufficient.'); return; }
+    this.player.mana -= e.extractCost;
+    Audio.sfxExtract();
+    VFX.spawnExtractShimmer(e.dir);
+    this.player.state = 'cast'; setTimeout(()=>{ if(this.player.state==='cast') this.player.state='idle'; }, 1000);
+    this.spawnManaFX(e.dir, 24);
+    this.addFloat(e.dir, '◈ SHADOW EXTRACTED', '#c4b5fd', 11);
+    if (!this.extractedTypes.includes(e.type)) {
+      this.extractedTypes.push(e.type);
+      this.log(`The shadow of ${e.type} is yours — forever.`, true);
+    } else {
+      const mp = this.manaKillRefund(e.type);
+      this.addFloat(e.dir, `+${mp}mp`, '#a78bfa', 9);
+      this.log('Shadow essence absorbed.');
+    }
+    this.score += e.value;
+    this.enemies = this.enemies.filter(en => en !== e);
+    if (this.currentTarget === e) this.currentTarget = null;
+    this.updateRoster();
+  },
+
+  summonShadow(type) {
+    if (this.shadows.length >= this.MAX_SHADOWS) { this.log('Shadow army at full strength.'); return; }
+    const cost = this.shadowStats[type].summonCost;
+    if (this.player.mana < cost) { this.log('Mana insufficient to summon.'); return; }
+    this.player.mana -= cost;
+    Audio.sfxSummon();
+    VFX.spawnSummonColumn(this.player.dir);
+    this.player.state = 'cast'; setTimeout(()=>{ if(this.player.state==='cast') this.player.state='idle'; }, 700);
+    const spawnDir = this.player.dir.clone()
+      .applyAxisAngle(new THREE.Vector3().crossVectors(this.player.dir, this.player.forward).normalize(), 0.25)
+      .normalize();
+    this.shadows.push({ type, dir: spawnDir, hp: 100, atk: this.shadowStats[type].atk, speed: this.shadowStats[type].speed });
+    this.spawnManaFX(spawnDir, 18);
+    this.addFloat(spawnDir, '☽ MANIFESTED', '#7c3aed', 12);
+    this.log(`Shadow ${type} rises at your call.`);
+    this.updateRoster();
+  },
+
+  doRally() {
+    if (this.rallyTimer > 0) return;
+    if (this.shadows.length === 0) { this.log('No shadow army to rally.'); return; }
+    const targets = this.bossActive && this.boss ? [this.boss] : this.enemies;
+    if (targets.length === 0) { this.log('No enemies to charge.'); return; }
+    // Find closest enemy to player (rally target)
+    let rallyTarget = targets[0];
+    let minAng = Infinity;
+    for (const t of targets) {
+      const a = t.dir.angleTo(this.player.dir);
+      if (a < minAng) { minAng = a; rallyTarget = t; }
+    }
+    // Burst all shadows toward target + deal bonus damage
+    let burst = 0;
+    for (const sh of this.shadows) {
+      sh.dir.lerp(rallyTarget.dir, 0.7).normalize(); // teleport-charge
+      const dmg = Math.ceil(sh.atk * 2.2);
+      rallyTarget.hp -= dmg;
+      burst += dmg;
+      this.spawnDeathBurst(rallyTarget.dir, sh.type);
+    }
+    this.rallyTimer = this.RALLY_COOLDOWN;
+    Audio.sfxSummon();
+    VFX.spawnSummonColumn(this.player.dir);
+    this.triggerFlash('#1a0840', 0.35);
+    this.addFloat(rallyTarget.dir, `☽ RALLY -${burst}`, '#c4b5fd', 13);
+    this.log(`Shadow army rallies! ${burst} burst damage.`, true);
+    // Check boss kill
+    if (this.bossActive && this.boss === rallyTarget) {
+      if (rallyTarget.hp <= 0 && rallyTarget.impaired) { this.defeatBoss(); return; }
+      else if (rallyTarget.hp <= 0) { rallyTarget.hp = 1; }
+    } else {
+      const dead = this.enemies.filter(e => e.hp <= 0);
+      for (const d of dead) {
+        this.enemies = this.enemies.filter(e => e !== d);
+        this.kills++; this.score += d.value || 10;
+        const mp = this.manaKillRefund(d.type);
+        this.dropManaShard(d.dir, mp + 5);
+        this.spawnDeathBurst(d.dir, d.type);
+      }
+    }
+  },
+
+  manaKillRefund(type) {
+    const refunds = { skeleton:5, goblin:8, wolf:12, dmagno:0 };
+    const mp = refunds[type] || 5;
+    this.player.mana = Math.min(this.player.maxMana, this.player.mana + mp);
+    return mp;
+  },
+
+
+  dropManaShard(dir, amount) {
+    this.manaShardsOnGround.push({
+      dir: dir.clone(), amount, life: 600, id: Date.now() + Math.random()
+    });
+  },
+
+  collectManaShards() {
+    const p = this.player;
+    const toCollect = this.manaShardsOnGround.filter(s =>
+      s.dir.angleTo(p.dir) * PLANET_R < 3.5
+    );
+    for (const s of toCollect) {
+      this.player.mana = Math.min(this.player.maxMana, this.player.mana + s.amount);
+      this.addFloat(p.dir, `+${s.amount}mp`, '#a78bfa', 10);
+      Audio.sfxManaRegen();
+    }
+    if (toCollect.length) this.manaShardsOnGround = this.manaShardsOnGround.filter(s => !toCollect.includes(s));
+    // Age out uncollected
+    for (const s of this.manaShardsOnGround) s.life--;
+    this.manaShardsOnGround = this.manaShardsOnGround.filter(s => s.life > 0);
+  },
+
+  // ── Movement (planet-surface walk) ──────────────────────
+  moveToward(entityDirRef, targetDir, speed, dt) {
+    const angle = entityDirRef.angleTo(targetDir);
+    if (angle < 0.002) return;
+    const t = Math.min(1, (speed * dt / PLANET_R) / angle);
+    entityDirRef.lerp(targetDir, t).normalize();
+  },
+
+  updatePlayerMovement(dt) {
+    const up = this.player.dir;
+
+    // ── Apply camera yaw rotation to player.forward ──────────────
+    // cameraYaw is accumulated by mouse-drag / right-touch. Rotating
+    // forward around the surface-normal (up) is what pivots the
+    // camera without moving the player's position on the sphere.
+    if (Math.abs(cameraYaw) > 0.00005) {
+      const q = new THREE.Quaternion().setFromAxisAngle(up, -cameraYaw);
+      this.player.forward.applyQuaternion(q).normalize();
+      cameraYaw = 0; // consume it
+    }
+
+    // ── Re-orthonormalize forward to stay tangent to the sphere ──
+    {
+      const d = this.player.forward.dot(up);
+      this.player.forward.addScaledVector(up, -d).normalize();
+    }
+
+    // ── WASD / joystick movement ──────────────────────────────────
+    // Input.moveForward: W=-1, S=+1 (negative = walk toward screen)
+    // Input.moveRight:   A=-1, D=+1 (strafe across camera's right)
+    const fwd = Input.moveForward; // -1..1
+    const str = Input.moveRight;   // -1..1
+    const mag = Math.min(1, Math.hypot(fwd, str));
+
+    if (mag > 0.05) {
+      // forward/back uses player.forward; strafe uses the surface-right
+      const right = new THREE.Vector3().crossVectors(up, this.player.forward).normalize();
+      const moveDir = new THREE.Vector3()
+        .addScaledVector(this.player.forward, -fwd) // W moves toward fwd
+        .addScaledVector(right, str);               // D moves right
+      if (moveDir.lengthSq() > 1e-6) {
+        moveDir.normalize();
+        const axis = new THREE.Vector3().crossVectors(up, moveDir);
+        if (axis.lengthSq() > 1e-8) {
+          axis.normalize();
+          const angle = mag * this.MOVE_SPEED * dt / PLANET_R;
+          const q = new THREE.Quaternion().setFromAxisAngle(axis, angle);
+          this.player.dir.applyQuaternion(q).normalize();
+        }
+      }
+      this.player.state = 'walk';
+      if (this.frame % 14 === 0) Audio.sfxMove();
+
+      // Facing is now handled by Char3D which rotates the 3D mesh.
+      // player.forward already tracks the movement direction — no
+      // per-frame dot-product needed for sprite selection.
+    } else {
+      this.player.state = this.player.state === 'cast' ? 'cast' : 'idle';
+      // Standing still — keep last facing but settle toward front
+      // so idle always looks natural after a short delay
+    }
+  },
+
+  updateCamera() {
+    const up = this.player.dir;
+    const fwd = this.player.forward;
+    const worldPos = up.clone().multiplyScalar(PLANET_R);
+    // Elevated, pulled-back battlefield angle rather than a tight
+    // behind-the-shoulder framing: since every character is a
+    // front-facing 2D billboard (always rotating to face the camera,
+    // with no "back" sprite), a close chase-cam makes Al Von Kan
+    // visually dominate the frame and always appear to face the
+    // viewer. Pulling the camera up and back shrinks that effect and,
+    // more importantly, gives visibility across the curved surface so
+    // enemies approaching from any direction are actually seen.
+    let camPos = worldPos.clone().addScaledVector(up, 13).addScaledVector(fwd, -6);
+    const radialDist = camPos.length();
+    if (radialDist < PLANET_R + 3) camPos.setLength(PLANET_R + 5);
+
+    if (this.screenShake > 0) {
+      const s = this.screenShakeAmt * (this.screenShake / 10) * 0.06;
+      camPos.addScaledVector(new THREE.Vector3(Math.random()-0.5, Math.random()-0.5, Math.random()-0.5), s);
+      this.screenShake--;
+      if (this.screenShake <= 0) this.screenShakeAmt = 0;
+    }
+    camera.position.lerp(camPos, 0.14);
+    camera.up.copy(up);
+    const lookAt = worldPos.clone().addScaledVector(up, 1.2).addScaledVector(fwd, 1.0);
+    camera.lookAt(lookAt);
+  },
+
+  update(dt) {
+    this.frame++;
+    const p = this.player;
+
+    this.updatePlayerMovement(dt);
+    this.updateCamera();
+    this.updateTarget();
+
+    // Mana regen
+    if (++this.manaRegenTimer >= 80) {
+      p.mana = Math.min(p.maxMana, p.mana + 2);
+      this.manaRegenTimer = 0;
+      if (p.mana < p.maxMana) Audio.sfxManaRegen();
+    }
+
+    // Impair timers
+    for (const e of this.enemies) {
+      if (e.impaired && --e.impaireTimer <= 0) { e.impaired = false; }
+    }
+
+    // ── Rally cooldown tick ─────────────────────────────────
+    if (this.rallyTimer > 0) {
+      this.rallyTimer--;
+      const cdSec = Math.ceil(this.rallyTimer / 60);
+      const el = document.getElementById('rally-cd');
+      if (el) el.textContent = this.rallyTimer > 0 ? cdSec : '☽';
+      document.getElementById('btn-rally').classList.toggle('cooldown', this.rallyTimer > 0);
+    }
+
+    // ── Mana shard collection ────────────────────────────────
+    this.collectManaShards();
+
+    // ── Aggression proximity bonus ───────────────────────────
+    // Shadows deal +40% damage when Al Von Kan is within close
+    // range of the target they're fighting. This makes staying
+    // in the fight actively rewarding instead of retreating.
+    const AGGRO_RANGE_ARC = 0.18; // ~6 units on surface
+    let inAggroRange = false;
+    const aggroTargets = this.bossActive && this.boss ? [this.boss] : this.enemies;
+    for (const t of aggroTargets) {
+      if (p.dir.angleTo(t.dir) < AGGRO_RANGE_ARC) { inAggroRange = true; break; }
+    }
+    this.aggroBonus = inAggroRange && aggroTargets.length > 0;
+    document.getElementById('aggro-bonus').style.display = this.aggroBonus ? 'block' : 'none';
+    const aggroMult = this.aggroBonus ? 1.4 : 1.0;
+
+    // ── Enemy AI (with behaviour variants) ──────────────────
+    this.enemyAttackTimer++;
+    for (const e of this.enemies) {
+      if (e.impaired) continue;
+
+      if (e.variant === 'ranger') {
+        // Ranger: keep a comfortable distance, fire slow projectiles
+        const ang = e.dir.angleTo(p.dir) * PLANET_R;
+        const PREFERRED = 9.0;
+        if (ang < PREFERRED - 1.5) {
+          // Back away
+          const awayDir = e.dir.clone().addScaledVector(p.dir, -0.15).normalize();
+          this.moveToward(e.dir, awayDir, e.speed, dt);
+        } else if (ang > PREFERRED + 2.0) {
+          this.moveToward(e.dir, p.dir, e.speed * 0.6, dt);
+        }
+        e.rangerCooldown = (e.rangerCooldown || 0) + 1;
+        if (e.rangerCooldown > 130 && ang < 22) {
+          e.rangerCooldown = 0;
+          // Spawn a slow projectile (stored as a mana shard dir that hurts on collect)
+          this.particles.push({
+            dir: e.dir.clone(), rise: 1.8,
+            ox: 0, oy: 0,
+            life: 90, maxLife: 90,
+            color: '#ef4444', size: 6,
+            isProjectile: true,
+            targetDir: p.dir.clone(),
+            speed: 0.025,
+            dmg: e.atk
+          });
+        }
+      } else if (e.variant === 'pack') {
+        // Pack: stays close to other pack members, gets bonus when grouped
+        this.moveToward(e.dir, p.dir, e.speed, dt);
+        // Count nearby pack members for atk buff (handled at attack time)
+      } else {
+        // Normal + rusher — always move toward player
+        this.moveToward(e.dir, p.dir, e.speed, dt);
+      }
+
+      // Melee attack
+      const distArc = e.dir.angleTo(p.dir) * PLANET_R;
+      const MELEE_RANGE = e.variant === 'rusher' ? 3.8 : 3.2;
+      if (distArc < MELEE_RANGE && this.enemyAttackTimer % 75 === 0) {
+        // Pack buff: count neighbours
+        let packAtk = e.atk;
+        if (e.variant === 'pack') {
+          const nearby = this.enemies.filter(o => o !== e && o.variant === 'pack' && o.dir.angleTo(e.dir) < 0.25);
+          packAtk = Math.ceil(e.atk * (1 + nearby.length * 0.25));
+        }
+        p.hp -= packAtk;
+        Audio.sfxHit(); this.triggerShake(4, 8); this.triggerFlash('#8b0000', 0.35);
+        this.addFloat(p.dir, `-${packAtk}`, '#ef4444');
+        this.spawnParticle(p.dir, '#dc2626');
+        if (p.hp <= 0) { p.hp = 0; Audio.sfxDeath(); this.gameOver(false); return; }
+      }
+    }
+
+    // ── Projectile update (ranger shots) ─────────────────────
+    for (const pt of this.particles) {
+      if (!pt.isProjectile) continue;
+      pt.dir.lerp(pt.targetDir, pt.speed).normalize();
+      const distToPlayer = pt.dir.angleTo(p.dir) * PLANET_R;
+      if (distToPlayer < 3.5) {
+        p.hp -= pt.dmg;
+        pt.life = 0; // consumed
+        Audio.sfxHit(); this.triggerShake(3, 6); this.triggerFlash('#8b0000', 0.25);
+        this.addFloat(p.dir, `-${pt.dmg}`, '#ef4444');
+        if (p.hp <= 0) { p.hp = 0; Audio.sfxDeath(); this.gameOver(false); return; }
+      }
+    }
+
+    // ── Shadow AI — attack nearest enemy or boss ─────────────
+    this.shadowAttackTimer++;
+    const targets = this.bossActive && this.boss && this.bossPhase === 'corporeal' ? [this.boss] : this.enemies;
+    for (const sh of this.shadows) {
+      if (targets.length === 0) { this.moveToward(sh.dir, p.dir, sh.speed*0.6, dt); continue; }
+      let nearest = null, nd = Infinity;
+      for (const t of targets) {
+        const a = t.dir.angleTo(sh.dir);
+        if (a < nd) { nd = a; nearest = t; }
+      }
+      if (!nearest) continue;
+      const arcDist = nd * PLANET_R;
+      if (arcDist > 3.0) this.moveToward(sh.dir, nearest.dir, sh.speed, dt);
+      if (arcDist < 3.4 && this.shadowAttackTimer % 55 === 0) {
+        if (sh.type === 'dmagno' && Math.random() < 0.35) {
+          sh.dir.lerp(nearest.dir, 0.6).normalize();
+        }
+        // Apply aggro multiplier
+        const finalAtk = Math.ceil(sh.atk * aggroMult);
+        nearest.hp -= finalAtk;
+        Audio.sfxEnemyHit();
+        const dmgColor = this.aggroBonus ? '#fbbf24' : '#c4b5fd';
+        this.addFloat(nearest.dir, `-${finalAtk}`, dmgColor);
+        this.spawnParticle(nearest.dir, sh.type==='dmagno' ? '#d97706' : '#7c3aed');
+        if (nearest === this.boss) {
+          Audio.sfxBossHit();
+          if (nearest.hp <= 0 && nearest.impaired) { this.defeatBoss(); return; }
+          else if (nearest.hp <= 0) { nearest.hp = 1; this.log('Deimian Magno clings to corporeal form. Impair him first!', true); }
+        } else if (nearest.hp <= 0) {
+          this.enemies = this.enemies.filter(e => e !== nearest);
+          const mp = this.manaKillRefund(nearest.type);
+          this.kills++; this.score += nearest.value || 10;
+          Audio.sfxKill();
+          // Drop mana shard at kill location — must be walked over
+          this.dropManaShard(nearest.dir, mp);
+          this.addFloat(nearest.dir, '✦ SHARD', '#a78bfa', 9);
+          this.spawnDeathBurst(nearest.dir, nearest.type);
+          this.log(`Shadow annihilated the ${nearest.type}.`);
+          if (this.currentTarget === nearest) this.currentTarget = null;
+        }
+      }
+    }
+
+    // ── Boss update ──────────────────────────────────────
+    if (this.bossActive && this.boss) {
+      const b = this.boss;
+
+      if (this.bossShadowPool) {
+        this.bossShadowPool.timer--;
+        if (p.dir.angleTo(this.bossShadowPool.dir) * PLANET_R < 4.5) { this.absorbBoss(); return; }
+        if (this.bossShadowPool.timer <= 0) {
+          this.log('Deimian Magno reforms — the moment passed!', true);
+          b.hp = Math.ceil(b.maxHp * 0.25); b.impaired = false;
+          this.bossShadowPool = null; poolRing.visible = false;
+          this.bossPhase = 'corporeal'; this.bossPhaseTimer = this.BOSS_CORPOREAL_TICKS;
+        }
+        document.getElementById('boss-bar-inner').style.width = (b.hp/b.maxHp*100)+'%';
+      } else {
+        if (this.bossPhaseAlpha > 0) this.bossPhaseAlpha = Math.max(0, this.bossPhaseAlpha - 0.025);
+        if (b.impaired && --b.impaireTimer <= 0) { b.impaired = false; this.log('Deimian Magno shrugs off the shadow bind.', true); }
+
+        if (!b.impaired) {
+          this.bossPhaseTimer--;
+          if (this.bossPhase === 'corporeal' && this.bossPhaseTimer <= 0) {
+            this.bossPhase = 'shadow'; this.bossPhaseAlpha = 1;
+            const urgency = b.hp/b.maxHp < 0.3 ? this.BOSS_SHADOW_TICKS*0.7 : this.BOSS_SHADOW_TICKS;
+            this.bossPhaseTimer = Math.floor(urgency);
+            document.getElementById('boss-phase-label').textContent = '— Shadow Phase —';
+            Audio.sfxBossPhase(); this.triggerShake(8,14); this.triggerFlash('#3d1a00', 0.5);
+            const axis = new THREE.Vector3().crossVectors(b.dir, p.dir).normalize();
+            b.dir.copy(p.dir).applyAxisAngle(axis.lengthSq()>0?axis:new THREE.Vector3(1,0,0), 0.35);
+            p.hp -= b.shadowAtk;
+            Audio.sfxHit(); this.triggerShake(10,18); this.triggerFlash('#5c2700',0.6);
+            this.addFloat(p.dir, `-${b.shadowAtk}`, '#fbbf24');
+            this.spawnParticle(p.dir, '#d97706');
+            this.log('Deimian Magno vanishes — strikes from behind!');
+            if (p.hp <= 0) { p.hp = 0; Audio.sfxDeath(); this.gameOver(false); return; }
+          } else if (this.bossPhase === 'shadow' && this.bossPhaseTimer <= 0) {
+            this.bossPhase = 'corporeal'; this.bossPhaseAlpha = 0;
+            const urgency = b.hp/b.maxHp < 0.6 ? this.BOSS_CORPOREAL_TICKS*0.75 : this.BOSS_CORPOREAL_TICKS;
+            this.bossPhaseTimer = Math.floor(urgency);
+            document.getElementById('boss-phase-label').textContent = 'Corporeal Phase — Impair Now';
+          }
+        }
+        if (this.bossPhase === 'corporeal' && !b.impaired) {
+          this.moveToward(b.dir, p.dir, b.speed, dt);
+          const ang = b.dir.angleTo(p.dir) * PLANET_R;
+          if (ang < 3.6 && this.enemyAttackTimer % 65 === 0) {
+            p.hp -= b.atk; Audio.sfxHit(); this.triggerShake(5,9);
+            this.addFloat(p.dir, `-${b.atk}`, '#ef4444');
+            this.spawnParticle(p.dir, '#dc2626');
+            if (p.hp <= 0) { p.hp = 0; Audio.sfxDeath(); this.gameOver(false); return; }
+          }
+          if (b.hp/b.maxHp < 0.3 && this.enemyAttackTimer % 45 === 0 && ang < 3.6) {
+            const dmg = Math.floor(b.atk*0.6);
+            p.hp -= dmg;
+            this.addFloat(p.dir, `DESPERATION -${dmg}`, '#fbbf24', 10);
+            if (p.hp <= 0) { p.hp = 0; Audio.sfxDeath(); this.gameOver(false); return; }
+          }
+        }
+        document.getElementById('boss-bar-inner').style.width = (b.hp/b.maxHp*100)+'%';
+      }
+    }
+
+    // Particles / float text — projectiles handled in enemy AI section above
+    for (const pt of this.particles) { if (!pt.isProjectile) pt.life--; }
+    this.particles = this.particles.filter(pt => pt.life > 0);
+    for (const f of this.floatTexts) { f.age++; f.life--; }
+    this.floatTexts = this.floatTexts.filter(f => f.life > 0);
+
+    // Wave clear
+    if (this.enemies.length === 0 && this.waveBeating && !this.bossActive) {
+      this.waveBeating = false;
+      this.wave++;
+      if (this.wave > 10) { this.gameOver(true); return; }
+      p.mana = Math.min(p.maxMana, p.mana + 28);
+      p.hp = Math.min(p.maxHp, p.hp + 18);
+      Audio.sfxWaveClear(); this.triggerFlash('#1a0840', 0.5);
+      this.log('Wave cleared. Mana and vitality restored.', true);
+      setTimeout(() => this.spawnWave(), 2000);
+    }
+
+    this.updateHUD();
+  },
+
+  defeatBoss() {
+    const b = this.boss;
+    b.hp = 0;
+    this.bossShadowPool = { dir: b.dir.clone(), timer: 900 };
+    poolRing.visible = true;
+    this.boss = null; this._bossFlicker = false;
+    document.getElementById('boss-bar-wrap').classList.remove('visible');
+    Audio.sfxBossDefeated(); Audio.stopBossMusic();
+    this.triggerShake(16, 25); this.triggerFlash('#5c2700', 0.8);
+    this.addFloat(this.bossShadowPool.dir, 'DEIMIAN MAGNO FALLS', '#fbbf24', 14);
+    this.spawnManaFX(this.bossShadowPool.dir, 50);
+    this.log('Deimian Magno collapses. A shadow pool churns where he stood.', true);
+    this.log('Walk to the pool to absorb him before he reforms!');
+  },
+
+  absorbBoss() {
+    this.bossActive = false; this.bossDefeated = true;
+    this.bossShadowPool = null; poolRing.visible = false;
+    this.waveBeating = false;
+    if (!this.extractedTypes.includes('dmagno')) this.extractedTypes.push('dmagno');
+    const spawnDir = this.player.dir.clone()
+      .applyAxisAngle(new THREE.Vector3().crossVectors(this.player.dir, this.player.forward).normalize(), 0.25)
+      .normalize();
+    this.shadows.push({ type: 'dmagno', dir: spawnDir, hp: 150, atk: this.shadowStats.dmagno.atk, speed: this.shadowStats.dmagno.speed });
+    this.updateRoster();
+    Audio.sfxAbsorb();
+    this.addFloat(this.player.dir, '◈ DEIMIAN MAGNO BOUND', '#fbbf24', 13);
+    this.spawnManaFX(this.player.dir, 35);
+    this.log('Deimian Magno no longer hunts you. He hunts for you.', true);
+    this.player.state = 'cast'; setTimeout(()=>{ this.player.state='idle'; }, 1200);
+    this.wave++;
+    setTimeout(() => { this.waveBeating = true; this.spawnWave(); }, 3000);
+  },
+
+
+  // ── Sync all entities into the 3D scene ────────────────
+  syncThreeEntities() {
+    const activeIds = new Set();
+
+    // ── Al Von Kan — real 3D articulated character ──────────
+    // Char3D.place() positions and animates the skeleton on the
+    // planet surface, facing the player's current forward direction.
+    // The 2D billboard system is no longer used for the player.
+    Char3D.place(
+      this.player.dir,
+      this.player.forward,
+      this.player.state,
+      this.player.forward,
+      0.016
+    );
+    // No activeIds entry needed — Char3D manages its own scene node.
+
+    this.shadows.forEach((sh, i) => {
+      const id = 'shadow_' + i;
+      activeIds.add(id);
+      syncEntity(id, 200, 240, 2.5, 3.1, sh.dir,
+        (c, lx, ly) => {
+          if (sh.type === 'dmagno') S.shadowDMagno(c, lx, ly, this.frame, true);
+          else S.shadowCopy(c, lx, ly, this.frame, sh.type, true);
+        }, this.frame);
+    });
+
+    this.enemies.forEach(e => {
+      const id = 'enemy_' + e.id;
+      activeIds.add(id);
+      const sz = e.type === 'wolf' ? [3.4, 2.6] : [2.6, 3.2];
+      syncEntity(id, 200, 260, sz[0], sz[1], e.dir,
+        (c, lx, ly) => {
+          if (e.type === 'skeleton') S.skeleton(c, lx, ly, this.frame, e.hp, e.maxHp, e.impaired);
+          else if (e.type === 'goblin') S.goblin(c, lx, ly, this.frame, e.hp, e.maxHp, e.impaired);
+          else if (e.type === 'wolf')   S.wolf(c, lx, ly, this.frame, e.hp, e.maxHp, e.impaired);
+        }, this.frame);
+    });
+
+    if (this.boss) {
+      activeIds.add('boss');
+      const b = this.boss;
+      syncEntity('boss', 260, 320, 4.0, 4.9, b.dir,
+        (c, lx, ly) => S.dMagno(c, lx, ly, this.frame, b.hp, b.maxHp,
+          b.impaired ? { timer: b.impaireTimer } : false, this.bossPhase, this.bossPhaseAlpha), this.frame);
+    }
+
+    pruneStale(activeIds);
+
+    // Shadow pool ring position
+    if (this.bossShadowPool) {
+      poolRing.position.copy(this.bossShadowPool.dir).multiplyScalar(PLANET_R + 0.05);
+      orientBillboard(poolRing, this.bossShadowPool.dir, camera.position);
+      poolRing.rotation.z += 0.02;
+      const pulse = 0.6 + Math.sin(this.frame*0.14)*0.4;
+      poolRing.material.opacity = 0.5 + pulse*0.4;
+      const sc = 1 + pulse*0.15;
+      poolRing.scale.set(sc, sc, sc);
+    }
+
+    // Torch flicker
+    propLights.forEach((pl, i) => {
+      const flicker = 1 + Math.sin(this.frame*0.2 + pl.phase)*0.3 + Math.sin(this.frame*0.35+pl.phase)*0.15;
+      const dim = this._bossFlicker && this.bossActive ? 0.5 : 1;
+      pl.light.intensity = 2.6 * flicker * dim;
+      pl.flame.material.emissiveIntensity = 2.2 * flicker * dim;
+    });
+
+    // Boss-mode atmosphere
+    if (this._bossFlicker && this.bossActive) {
+      scene.fog.color.setHex(0x2a0800);
+      scene.fog.near = PLANET_R * 2.4; scene.fog.far = PLANET_R * 6.5;
+    } else {
+      scene.fog.color.setHex(0x0a0518);
+      scene.fog.near = PLANET_R * 3.2; scene.fog.far = PLANET_R * 9;
+    }
+  },
+
+  // ── FX overlay (2D canvas over the 3D view) ────────────
+  renderOverlay() {
+    fxCtx.clearRect(0, 0, fxCanvas.width, fxCanvas.height);
+
+    // ── Mana shards on ground ────────────────────────────────
+    for (const s of this.manaShardsOnGround) {
+      const wp = s.dir.clone().multiplyScalar(PLANET_R + 1.5);
+      const sp = worldToScreen(wp);
+      if (sp.behind) continue;
+      const pulse = 0.6 + Math.sin(this.frame * 0.12 + s.id) * 0.4;
+      const fade = s.life < 120 ? s.life / 120 : 1;
+      fxCtx.save();
+      fxCtx.globalAlpha = pulse * fade;
+      // Diamond shard icon
+      fxCtx.fillStyle = '#7c3aed';
+      fxCtx.shadowColor = '#c4b5fd'; fxCtx.shadowBlur = 12;
+      fxCtx.beginPath();
+      fxCtx.moveTo(sp.x, sp.y - 9);
+      fxCtx.lineTo(sp.x + 6, sp.y);
+      fxCtx.lineTo(sp.x, sp.y + 6);
+      fxCtx.lineTo(sp.x - 6, sp.y);
+      fxCtx.closePath();
+      fxCtx.fill();
+      fxCtx.fillStyle = '#c4b5fd'; fxCtx.shadowBlur = 0;
+      fxCtx.font = 'bold 8px Cinzel, serif';
+      fxCtx.textAlign = 'center';
+      fxCtx.fillText(`+${s.amount}`, sp.x, sp.y + 18);
+      fxCtx.restore();
+    }
+
+    // ── Ranger projectiles ────────────────────────────────────
+    for (const pt of this.particles) {
+      if (!pt.isProjectile) continue;
+      const wp = pt.dir.clone().multiplyScalar(PLANET_R + 2.0 + pt.rise);
+      const sp = worldToScreen(wp);
+      if (sp.behind) continue;
+      fxCtx.save();
+      fxCtx.globalAlpha = pt.life / pt.maxLife;
+      fxCtx.fillStyle = '#ef4444';
+      fxCtx.shadowColor = '#dc2626'; fxCtx.shadowBlur = 10;
+      fxCtx.beginPath(); fxCtx.arc(sp.x, sp.y, 5, 0, Math.PI*2); fxCtx.fill();
+      fxCtx.restore();
+    }
+
+    // Impair beam replaced by 3D VFX.spawnImpairBolt() — no 2D overlay needed
+
+    // ── Boss compass ─────────────────────────────────────────
+    const compass = document.getElementById('boss-compass');
+    const arrow   = document.getElementById('boss-compass-arrow');
+    const bossTarget = this.bossActive && this.boss ? this.boss : (this.bossShadowPool ? this.bossShadowPool : null);
+    if (bossTarget) {
+      compass.classList.add('visible');
+      // Project boss direction onto screen and compute angle from centre
+      const bWP = bossTarget.dir.clone().multiplyScalar(PLANET_R + 4);
+      const bSP = worldToScreen(bWP);
+      const cx  = fxCanvas.width  / 2;
+      const cy  = fxCanvas.height / 2;
+      const angleDeg = Math.atan2(bSP.y - cy, bSP.x - cx) * 180 / Math.PI + 90;
+      arrow.style.transform = `rotate(${angleDeg}deg)`;
+      // Pulse when boss is off-screen
+      const offScreen = bSP.behind || bSP.x < 0 || bSP.x > fxCanvas.width || bSP.y < 0 || bSP.y > fxCanvas.height;
+      compass.style.opacity = offScreen ? (0.6 + Math.sin(this.frame*0.15)*0.3).toString() : '0.45';
+    } else {
+      compass.classList.remove('visible');
+    }
+
+    // Enemy impair/extract prompts (only for visible, non-behind-camera entities)
+    for (const e of this.enemies) {
+      if (!e.impaired) continue;
+      const wp = e.dir.clone().multiplyScalar(PLANET_R + 3.4);
+      const sp = worldToScreen(wp);
+      if (sp.behind) continue;
+      fxCtx.save();
+      fxCtx.globalAlpha = 0.6 + Math.sin(this.frame*0.11)*0.3;
+      fxCtx.fillStyle = '#c4b5fd';
+      fxCtx.font = 'bold 13px Cinzel, serif';
+      fxCtx.textAlign = 'center';
+      fxCtx.shadowColor = '#7c3aed'; fxCtx.shadowBlur = 8;
+      fxCtx.fillText('⬡ EXTRACT', sp.x, sp.y);
+      fxCtx.restore();
+    }
+
+    // Boss impaired prompt
+    if (this.boss && this.boss.impaired) {
+      const wp = this.boss.dir.clone().multiplyScalar(PLANET_R + 4.6);
+      const sp = worldToScreen(wp);
+      if (!sp.behind) {
+        fxCtx.save();
+        fxCtx.globalAlpha = 0.7 + Math.sin(this.frame*0.13)*0.25;
+        fxCtx.fillStyle = '#fbbf24';
+        fxCtx.font = 'bold 14px Cinzel, serif';
+        fxCtx.textAlign = 'center';
+        fxCtx.shadowColor = '#d97706'; fxCtx.shadowBlur = 10;
+        fxCtx.fillText('⬡ IMPAIRED — FINISH HIM', sp.x, sp.y);
+        fxCtx.restore();
+      }
+    }
+
+    if (this.bossShadowPool) {
+      const wp = this.bossShadowPool.dir.clone().multiplyScalar(PLANET_R + 3);
+      const sp = worldToScreen(wp);
+      if (!sp.behind) {
+        fxCtx.save();
+        fxCtx.globalAlpha = 0.75 + Math.sin(this.frame*0.14)*0.2;
+        fxCtx.fillStyle = '#fbbf24';
+        fxCtx.font = 'bold 11px Cinzel, serif';
+        fxCtx.textAlign = 'center';
+        fxCtx.fillText('WALK TO THE POOL', sp.x, sp.y - 20);
+        fxCtx.restore();
+      }
+    }
+
+    // Particles
+    for (const pt of this.particles) {
+      const wp = pt.dir.clone().multiplyScalar(PLANET_R + 2.4 + pt.rise);
+      const sp = worldToScreen(wp);
+      pt.rise += 0.02;
+      if (sp.behind) continue;
+      fxCtx.save();
+      fxCtx.globalAlpha = pt.life / pt.maxLife;
+      fxCtx.fillStyle = pt.color;
+      fxCtx.fillRect(sp.x + pt.ox, sp.y + pt.oy, pt.size, pt.size);
+      fxCtx.restore();
+    }
+
+    // Floating combat text
+    for (const f of this.floatTexts) {
+      const wp = f.dir.clone().multiplyScalar(PLANET_R + 3.6 + f.age*0.012);
+      const sp = worldToScreen(wp);
+      if (sp.behind) continue;
+      fxCtx.save();
+      fxCtx.globalAlpha = f.life / f.maxLife;
+      fxCtx.fillStyle = f.color;
+      fxCtx.font = `bold ${f.size||12}px Cinzel, serif`;
+      fxCtx.textAlign = 'center';
+      fxCtx.shadowColor = f.color; fxCtx.shadowBlur = 6;
+      fxCtx.fillText(f.text, sp.x, sp.y);
+      fxCtx.restore();
+    }
+
+    // Target reticle
+    const plate = document.getElementById('target-plate');
+    if (this.currentTarget) {
+      const t = this.currentTarget;
+      const isBoss = t === this.boss;
+      const wp = t.dir.clone().multiplyScalar(PLANET_R + (isBoss ? 5.4 : 3.8));
+      const sp = worldToScreen(wp);
+      if (!sp.behind) {
+        plate.classList.add('visible');
+        plate.style.left = sp.x + 'px';
+        plate.style.top = sp.y + 'px';
+        document.getElementById('target-name').textContent = isBoss ? 'Deimian Magno' : t.type;
+        document.getElementById('target-hp-inner').style.width = (t.hp/t.maxHp*100) + '%';
+      } else plate.classList.remove('visible');
+    } else plate.classList.remove('visible');
+  },
+
+  // ── Particles / floating text (stored as dir + local offset) ──
+  spawnManaFX(dir, n) {
+    for (let i = 0; i < n; i++) {
+      this.particles.push({
+        dir: dir.clone(), rise: Math.random()*0.3,
+        ox: (Math.random()-0.5)*30, oy: (Math.random()-0.5)*30 - i*1.5,
+        life: 35+Math.random()*20, maxLife: 55,
+        color: Math.random()<0.55 ? '#7c3aed' : '#c4b5fd', size: 3+Math.random()*3
+      });
+    }
+  },
+  spawnParticle(dir, color) {
+    for (let i = 0; i < 6; i++) {
+      this.particles.push({
+        dir: dir.clone(), rise: Math.random()*0.2,
+        ox: (Math.random()-0.5)*24, oy: (Math.random()-0.5)*24,
+        life: 26, maxLife: 26, color, size: 3
+      });
+    }
+  },
+  spawnDeathBurst(dir, type) {
+    const colors = {
+      skeleton: ['#d4c5a9','#8b7d6b','#f0e8d8'], goblin: ['#4a7c3a','#6aaa5a','#ffcc00'],
+      wolf: ['#786050','#5a4838','#c08080'], dmagno: ['#d97706','#fbbf24','#7c3aed'],
+    };
+    const cols = colors[type] || ['#c4b5fd','#7c3aed'];
+    for (let i = 0; i < 16; i++) {
+      const ang = (i/16) * Math.PI * 2;
+      this.particles.push({
+        dir: dir.clone(), rise: 0.1,
+        ox: Math.cos(ang)*10, oy: Math.sin(ang)*10,
+        life: 30+Math.random()*20, maxLife: 50,
+        color: cols[Math.floor(Math.random()*cols.length)], size: 3+Math.random()*3
+      });
+    }
+  },
+  addFloat(dir, text, color, size) {
+    this.floatTexts.push({ dir: dir.clone(), age: 0, text, color, life: 60, maxLife: 60, size: size||12 });
+  },
+  triggerShake(frames, amount) {
+    this.screenShake = Math.max(this.screenShake, frames);
+    this.screenShakeAmt = Math.max(this.screenShakeAmt, amount);
+  },
+  triggerFlash(color, alpha) {
+    const f = document.getElementById('hit-flash');
+    f.style.background = color; f.style.transition = 'none'; f.style.opacity = alpha;
+    requestAnimationFrame(() => { f.style.transition = 'opacity 0.25s ease'; f.style.opacity = 0; });
+  },
+
+  // ── HUD / Roster ────────────────────────────────────────
+  updateHUD() {
+    const p = this.player;
+    const hpPct = p.hp / p.maxHp;
+    document.getElementById('health-bar-inner').style.width = (hpPct*100)+'%';
+    document.getElementById('mana-bar-inner').style.width = (p.mana/p.maxMana*100)+'%';
+    document.getElementById('score-label').textContent = `Shadows: ${this.shadows.length}`;
+    document.getElementById('enemy-label').textContent = `Enemies: ${this.enemies.length}`;
+    document.getElementById('kills-hud').textContent = `Kills: ${this.kills}`;
+    const hud = document.getElementById('hud');
+    if (hpPct < 0.25) hud.classList.add('hp-critical'); else hud.classList.remove('hp-critical');
+
+    const canImpair = this.currentTarget && !this.currentTarget.impaired &&
+      this.player.mana >= (this.currentTarget.impairCost||0) &&
+      !(this.currentTarget === this.boss && this.bossPhase !== 'corporeal');
+    const canExtract = this.currentTarget && this.currentTarget.impaired && this.currentTarget !== this.boss &&
+      this.player.mana >= (this.currentTarget.extractCost||0);
+    document.getElementById('btn-impair').classList.toggle('disabled', !canImpair);
+    document.getElementById('btn-extract').classList.toggle('disabled', !canExtract);
+    // Rally button CD display
+    const btnRally = document.getElementById('btn-rally');
+    if (btnRally) {
+      const hasTargets = (this.bossActive && this.boss) || this.enemies.length > 0;
+      btnRally.classList.toggle('cooldown', this.rallyTimer > 0 || this.shadows.length === 0 || !hasTargets);
+    }
+    // Show variant label on target plate
+    if (this.currentTarget && this.currentTarget.variant && this.currentTarget.variant !== 'normal') {
+      const nameEl = document.getElementById('target-name');
+      if (nameEl) nameEl.textContent = `${this.currentTarget.type} [${this.currentTarget.variant}]`;
+    }
+  },
+
+  updateRoster() {
+    const roster = document.getElementById('roster');
+    roster.innerHTML = '';
+    const labels = { skeleton:'BONE', goblin:'SHRK', wolf:'WOLF', dmagno:'DMAG' };
+    for (const type of this.extractedTypes) {
+      const cost = this.shadowStats[type].summonCost;
+      const count = this.shadows.filter(s => s.type === type).length;
+      const btn = document.createElement('button');
+      btn.className = 'roster-btn' + (type === 'dmagno' ? ' dmagno' : '');
+      if (this.player.mana < cost || this.shadows.length >= this.MAX_SHADOWS) btn.classList.add('disabled');
+      btn.onclick = () => this.summonShadow(type);
+      const mini = document.createElement('canvas');
+      mini.width = 30; mini.height = 36;
+      if (type === 'dmagno') S.shadowDMagno(mini.getContext('2d'), 15, 34, 0, true);
+      else S.shadowCopy(mini.getContext('2d'), 15, 34, 0, type, true);
+      btn.appendChild(mini);
+      const cost_el = document.createElement('div');
+      cost_el.className = 'roster-cost'; cost_el.textContent = cost + 'mp';
+      btn.appendChild(cost_el);
+      const count_el = document.createElement('div');
+      count_el.className = 'roster-count'; count_el.textContent = 'x' + count;
+      btn.appendChild(count_el);
+      roster.appendChild(btn);
+    }
+  },
+
+  log(msg, important) {
+    const log = document.getElementById('msg-log');
+    const e = document.createElement('div');
+    e.className = 'log-entry' + (important ? ' important' : '');
+    e.textContent = msg;
+    log.appendChild(e);
+    while (log.children.length > 5) log.removeChild(log.firstChild);
+  },
+
+  gameOver(won) {
+    this.running = false;
+    Char3D.hide();
+    const overlay = document.getElementById('screen-overlay');
+    overlay.innerHTML = '';
+    overlay.style.display = 'flex';
+    const title = document.createElement('div'); title.id='overlay-title';
+    title.textContent = won ? 'Al Von Kan' : 'Fallen';
+    const sub = document.createElement('div'); sub.id='overlay-subtitle';
+    sub.textContent = won ? '— Necro King of the Shard —' : '— The shard claimed you —';
+    const name = document.createElement('div'); name.id='overlay-name';
+    name.textContent = won ? '◈ The Shadow Army kneels ◈' : `◈ Wave ${this.wave} · ${this.shadows.length} shadow${this.shadows.length!==1?'s':''} bound ◈`;
+    const story = document.createElement('div'); story.id='overlay-story';
+    story.innerHTML = won
+      ? `Your shadow army stands ${this.shadows.length} strong.${this.bossDefeated?' Deimian Magno marches with you now.':''} Every creature on this drifting shard now fears your cold light.<br><br><em>${this.bossDefeated?'He no longer hunts you. He hunts for you.':'They gave you a new name in this world. Now that name carries weight.'}</em>`
+      : `This shard swallowed another isekai traveller. You fell on wave ${this.wave}.<br><br><em>Impair first. Extract while bound. Summon before the next wave breaks.</em>`;
+    const btn = document.createElement('button');
+    btn.className = 'overlay-btn primary'; btn.textContent = '↺ Rise Again';
+    btn.onclick = () => G.startGame();
+    [title,sub,name,story,btn].forEach(el => overlay.appendChild(el));
+  },
+};
+
+
+// ══════════════════ INPUT SYSTEM ══════════════════
+// PC: WASD = forward/back/strafe, mouse click+drag = rotate camera yaw
+// Mobile: left joystick = move, right swipe = rotate camera
+const Input = {
+  // Movement axes (applied relative to camera-derived forward/right on the sphere)
+  moveForward: 0,   // W/S or joyY — forward/back
+  moveRight: 0,     // A/D or joyX — strafe
+
+  // Camera rotation delta (accumulated each frame, consumed by updateCamera)
+  yawDelta: 0,
+};
+
+// ── Accumulated camera yaw (rotates the "forward" direction) ──
+let cameraYaw = 0; // radians, added to player.forward each frame
+
+(() => {
+  // ── KEYBOARD ──────────────────────────────────────────────────
+  const keys = { w:false, a:false, s:false, d:false };
+  window.addEventListener('keydown', e => {
+    const k = e.key.toLowerCase();
+    if (k==='w'||k==='arrowup')    keys.w = true;
+    if (k==='a'||k==='arrowleft')  keys.a = true;
+    if (k==='s'||k==='arrowdown')  keys.s = true;
+    if (k==='d'||k==='arrowright') keys.d = true;
+    if (k==='q' && G.running) G.doImpair();
+    if (k==='e' && G.running) G.doExtract();
+    if (k==='r' && G.running) G.doRally();
+  });
+  window.addEventListener('keyup', e => {
+    const k = e.key.toLowerCase();
+    if (k==='w'||k==='arrowup')    keys.w = false;
+    if (k==='a'||k==='arrowleft')  keys.a = false;
+    if (k==='s'||k==='arrowdown')  keys.s = false;
+    if (k==='d'||k==='arrowright') keys.d = false;
+  });
+  setInterval(() => {
+    Input.moveForward = (keys.s?1:0) - (keys.w?1:0); // W = forward
+    Input.moveRight   = (keys.a?1:0) - (keys.d?1:0); // A = strafe right (was flipped)
+  }, 16);
+
+  // ── MOUSE CLICK+DRAG — rotate camera yaw ──────────────────────
+  let mouseDragging = false, lastMouseX = 0;
+  const MOUSE_SENSITIVITY = 0.0032;
+  window.addEventListener('mousedown', e => {
+    // Only rotate when not clicking a UI element
+    if (e.target === threeCanvas || e.target === fxCanvas) {
+      mouseDragging = true;
+      lastMouseX = e.clientX;
+      e.preventDefault();
+    }
+  });
+  window.addEventListener('mousemove', e => {
+    if (!mouseDragging) return;
+    const dx = e.clientX - lastMouseX;
+    lastMouseX = e.clientX;
+    cameraYaw += dx * MOUSE_SENSITIVITY;
+  });
+  window.addEventListener('mouseup', () => { mouseDragging = false; });
+  window.addEventListener('mouseleave', () => { mouseDragging = false; });
+
+  // ── TOUCH — left zone = joystick (move), right zone = swipe (rotate) ──
+  const zone = document.getElementById('joy-zone');
+  const base = document.getElementById('joy-base');
+  const nub  = document.getElementById('joy-nub');
+  let joyActive = false, joyOriginX = 0, joyOriginY = 0, joyTouchId = null;
+  let rotTouchId = null, rotLastX = 0;
+  const RADIUS = 50;
+  const TOUCH_ROT_SENSITIVITY = 0.0040;
+
+  function joyStart(x, y, id) {
+    joyActive = true; joyTouchId = id; joyOriginX = x; joyOriginY = y;
+    base.style.display = 'block'; nub.style.display = 'block';
+    base.style.left = (x - RADIUS) + 'px'; base.style.top = (y - RADIUS) + 'px';
+    nub.style.left  = (x - 21) + 'px';     nub.style.top  = (y - 21) + 'px';
+  }
+  function joyMove(x, y) {
+    let dx = x - joyOriginX, dy = y - joyOriginY;
+    const dist = Math.hypot(dx, dy);
+    if (dist > RADIUS) { dx = dx/dist*RADIUS; dy = dy/dist*RADIUS; }
+    nub.style.left = (joyOriginX + dx - 21) + 'px'; nub.style.top = (joyOriginY + dy - 21) + 'px';
+    // joyX unused for movement now — A/D handles strafe; joy left/right ALSO rotates on mobile
+    Input.moveRight   = -dx / RADIUS; // mirror keyboard fix: left = positive right
+    Input.moveForward =  dy / RADIUS; // positive dy = finger down = move backward (natural)
+  }
+  function joyEnd() {
+    joyActive = false; joyTouchId = null;
+    base.style.display = 'none'; nub.style.display = 'none';
+    Input.moveForward = 0; Input.moveRight = 0;
+  }
+
+  zone.addEventListener('touchstart', e => {
+    e.preventDefault();
+    const t = e.changedTouches[0];
+    joyStart(t.clientX, t.clientY, t.identifier);
+  }, { passive:false });
+  zone.addEventListener('touchmove', e => {
+    e.preventDefault();
+    for (const t of e.changedTouches) if (t.identifier === joyTouchId) joyMove(t.clientX, t.clientY);
+  }, { passive:false });
+  zone.addEventListener('touchend', e => {
+    for (const t of e.changedTouches) if (t.identifier === joyTouchId) joyEnd();
+  });
+  zone.addEventListener('touchcancel', joyEnd);
+
+  // Right half of screen = drag to rotate
+  window.addEventListener('touchstart', e => {
+    for (const t of e.changedTouches) {
+      if (t.clientX > window.innerWidth * 0.46 && rotTouchId === null
+          && t.identifier !== joyTouchId) {
+        rotTouchId = t.identifier; rotLastX = t.clientX;
+      }
+    }
+  }, { passive:true });
+  window.addEventListener('touchmove', e => {
+    for (const t of e.changedTouches) {
+      if (t.identifier === rotTouchId) {
+        cameraYaw += (t.clientX - rotLastX) * TOUCH_ROT_SENSITIVITY;
+        rotLastX = t.clientX;
+      }
+    }
+  }, { passive:true });
+  window.addEventListener('touchend', e => {
+    for (const t of e.changedTouches) if (t.identifier === rotTouchId) rotTouchId = null;
+  }, { passive:true });
+})();
+
+// ══════════════════ MAIN LOOP ══════════════════
+const clock = new THREE.Clock();
+let introAngle = 0;
+
+function mainLoop() {
+  requestAnimationFrame(mainLoop);
+  const dt = Math.min(0.05, clock.getDelta());
+
+  if (G.running) {
+    G.update(dt);
+    tickEnv(dt);
+    VFX.tick(dt);
+    if (!G.running) { /* game over triggered mid-update */ }
+    G.syncThreeEntities();
+    G.renderOverlay();
+  } else {
+    // Idle intro: slow orbit around the shard
+    Char3D.hide();
+    introAngle += dt * 0.06;
+    const r = PLANET_R * 2.6;
+    camera.position.set(Math.sin(introAngle)*r, PLANET_R*0.75, Math.cos(introAngle)*r);
+    camera.up.set(0,1,0);
+    camera.lookAt(0, 0, 0);
+    propLights.forEach((pl, i) => {
+      const flicker = 1 + Math.sin(performance.now()*0.002 + pl.phase)*0.3;
+      pl.light.intensity = 2.4 * flicker;
+      pl.flame.material.emissiveIntensity = 2.0 * flicker;
+    });
+  }
+
+  renderer.render(scene, camera);
+}
+
+// ══════════════════ PWA REGISTRATION ══════════════════
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(() => {});
+  });
+}
+
+// ══════════════════ FULLSCREEN + ROTATE PROMPT ══════════════════
+// _simFS and the toggleFullscreen stub are hoisted in <head> so the
+// button onclick never hits a TDZ. The real logic lives here and is
+// assigned to _toggleFullscreenImpl which the stub delegates to.
+
+function isNativeFS() {
+  return !!(document.fullscreenElement || document.webkitFullscreenElement
+         || document.mozFullScreenElement || document.msFullscreenElement);
+}
+function setFsIcon(on) {
+  const btn = document.getElementById('fs-btn');
+  btn.textContent = on ? '✕' : '⛶';
+  btn.title = on ? 'Exit Fullscreen' : 'Fullscreen';
+}
+function enterSimFS() {
+  _simFS = true;
+  document.body.style.cssText += 'position:fixed;top:0;left:0;width:100vw;height:100vh;overflow:hidden;';
+  window.scrollTo(0, 1);
+  setTimeout(() => { window.scrollTo(0,1); resizeRenderer(); setFsIcon(true); }, 120);
+}
+function exitSimFS() {
+  _simFS = false;
+  setTimeout(() => { resizeRenderer(); setFsIcon(false); }, 80);
+}
+function _toggleFullscreenImpl() {
+  if (isNativeFS()) {
+    const ex = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen || document.msExitFullscreen;
+    if (ex) ex.call(document);
+    return;
+  }
+  if (_simFS) { exitSimFS(); return; }
+  const el = document.documentElement;
+  const req = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
+  if (req) {
+    req.call(el).then(() => {
+      if (screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(()=>{});
+      setFsIcon(true);
+    }).catch(() => enterSimFS());
+  } else enterSimFS();
+}
+window._toggleFullscreenImpl = _toggleFullscreenImpl;
+function onFsChange() {
+  const on = isNativeFS();
+  setFsIcon(on);
+  if (!on && _simFS) _simFS = false;
+  setTimeout(resizeRenderer, 120);
+}
+document.addEventListener('fullscreenchange', onFsChange);
+document.addEventListener('webkitfullscreenchange', onFsChange);
+document.addEventListener('mozfullscreenchange', onFsChange);
+
+function checkOrientation() {
+  const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+  const isPortrait = window.innerHeight > window.innerWidth;
+  const prompt = document.getElementById('rotate-prompt');
+  if (isTouchDevice && isPortrait && !_simFS) prompt.classList.add('visible');
+  else { prompt.classList.remove('visible'); resizeRenderer(); }
+}
+checkOrientation();
+window.addEventListener('resize', checkOrientation);
+window.addEventListener('orientationchange', () => setTimeout(checkOrientation, 200));
+
+// ══════════════════ BOOT ══════════════════
+function boot() {
+  const bar = document.getElementById('loading-bar-inner');
+  let pct = 0;
+  const iv = setInterval(() => {
+    pct = Math.min(100, pct + 8 + Math.random()*12);
+    bar.style.width = pct + '%';
+    if (pct >= 100) {
+      clearInterval(iv);
+      setTimeout(() => document.getElementById('loading-veil').classList.add('hidden'), 200);
+    }
+  }, 90);
+  mainLoop();
+}
+boot();
+
+</script>
+</body>
+</html>
