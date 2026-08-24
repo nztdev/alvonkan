@@ -2007,6 +2007,8 @@ const Char3D = (() => {
     const pelvis = new THREE.Object3D();
     pelvis.position.y = 0.45;
     root.add(pelvis);
+    root.userData.torsoRef = torso;   // named ref — don't rely on children[] index
+    root.userData.pelvisRef = pelvis;
 
     // Hip box
     const hip = box(0.48, 0.18, 0.26, mats.trousers);
@@ -2078,6 +2080,7 @@ const Char3D = (() => {
 
   // ── Pose the skeleton each frame ──────────────────────────
   function animate(dt, state) {
+    try {
     _t += dt;
     const d = _t;
     const u = charRoot.userData;
@@ -2104,13 +2107,16 @@ const Char3D = (() => {
     u.kneeR.rotation.x = Math.max(0,  walkPhase) * walkAmp * 0.9;
 
     // Torso bob and sway
-    charRoot.children[0].rotation.y = walkPhase * walkBlend * 0.12;
-    charRoot.children[0].rotation.z = walkPhase * walkBlend * 0.04; // lean
+    const torsoRef  = u.torsoRef;
+    const pelvisRef = u.pelvisRef;
+    if (!torsoRef || !pelvisRef) return; // guard: not yet built
+    torsoRef.rotation.y = walkPhase * walkBlend * 0.12;
+    torsoRef.rotation.z = walkPhase * walkBlend * 0.04;
 
-    // Idle breath (more visible — was 0.018)
+    // Idle breath
     const breathAmp = (1 - walkBlend) * 0.038 + walkBlend * 0.014;
-    charRoot.children[0].position.y = 0.85 + Math.sin(d * 1.4) * breathAmp;
-    charRoot.children[1].position.y = 0.45 + Math.sin(d * 1.4) * breathAmp * 0.5;
+    torsoRef.position.y  = 0.85 + Math.sin(d * 1.4) * breathAmp;
+    pelvisRef.position.y = 0.45 + Math.sin(d * 1.4) * breathAmp * 0.5;
 
     // ── Arms ───────────────────────────────────────────────
     const armSwingAmp = walkBlend * 0.65;  // was 0.32 — doubled
@@ -2141,9 +2147,11 @@ const Char3D = (() => {
     u.handLightR.distance = 8.0;
     mats.handGlow.emissiveIntensity = castBlend * 3.2;  // was 1.4
     mats.handGlow.emissive.setHex(castBlend > 0.05 ? 0x7c3aed : 0x2d1b69);
-    // Hand mesh itself scales up slightly when glowing
-    if (u.handL) u.handL.scale.setScalar(1 + castBlend * 0.45);
-    if (u.handR) u.handR.scale.setScalar(1 + castBlend * 0.45);
+    // Hand mesh scales up when glowing
+    try {
+      if (u.handL) u.handL.scale.setScalar(1 + castBlend * 0.45);
+      if (u.handR) u.handR.scale.setScalar(1 + castBlend * 0.45);
+    } catch(e) {}
 
     // ── Head ───────────────────────────────────────────────
     const headBob = walkBlend * Math.sin(d * walkFreq * 0.5) * 0.08;
@@ -2151,14 +2159,14 @@ const Char3D = (() => {
     u.headPivot.rotation.y = walkPhase * walkBlend * 0.12;
 
     // ── Eyes — obvious glow when casting ──────────────────
-    const eyeGlow = castBlend * 2.8;   // was 0.9 — 3× brighter
-    u.eyeL.material.emissiveIntensity = eyeGlow;
-    u.eyeR.material.emissiveIntensity = eyeGlow;
-    // Amber tint when fully casting (channelling the mana shard / boss energy)
+    const eyeGlow = castBlend * 2.8;
+    if (u.eyeL) u.eyeL.material.emissiveIntensity = eyeGlow;
+    if (u.eyeR) u.eyeR.material.emissiveIntensity = eyeGlow;
     if (castBlend > 0.5) {
-      u.eyeL.material.emissive.setHex(0x7c3aed);
-      u.eyeR.material.emissive.setHex(0x7c3aed);
+      if (u.eyeL) u.eyeL.material.emissive.setHex(0x7c3aed);
+      if (u.eyeR) u.eyeR.material.emissive.setHex(0x7c3aed);
     }
+    } catch(animErr) { /* never let animation crash the render loop */ }
   }
 
   // Place and orient the character on the planet surface,
@@ -3998,12 +4006,20 @@ function mainLoop() {
   const dt = Math.min(0.022, rawDt); // hard cap at ~45fps equivalent
 
   if (G.running) {
-    G.update(dt);
-    tickEnv(dt);
-    VFX.tick(dt);
+    try {
+      G.update(dt);
+      tickEnv(dt);
+      VFX.tick(dt);
+    } catch(gameErr) {
+      console.error('Game update error:', gameErr);
+    }
     if (!G.running) { /* game over triggered mid-update */ }
-    G.syncThreeEntities();
-    G.renderOverlay();
+    try {
+      G.syncThreeEntities();
+      G.renderOverlay();
+    } catch(renderErr) {
+      console.error('Render error:', renderErr);
+    }
   } else {
     // Idle intro: slow orbit around the shard
     Char3D.hide();
