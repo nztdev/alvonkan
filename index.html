@@ -35,9 +35,11 @@
      This prevents the browser from re-rasterising the canvas on every
      scroll/touch event, which is a primary cause of iOS stutter. */
   #three-canvas{position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;display:block;
-    will-change:transform;-webkit-transform:translateZ(0);transform:translateZ(0);}
+    will-change:transform;-webkit-transform:translateZ(0);transform:translateZ(0);
+    touch-action:none;}
   #fx-canvas{position:fixed;top:0;left:0;width:100%;height:100%;z-index:1;pointer-events:none;
-    will-change:transform;-webkit-transform:translateZ(0);transform:translateZ(0);}
+    will-change:transform;-webkit-transform:translateZ(0);transform:translateZ(0);
+    touch-action:none;}
 
   /* iOS PWA install prompt (shown instead of broken fullscreen button on iOS Safari) */
   #ios-install-prompt{display:none;position:fixed;bottom:60px;left:50%;transform:translateX(-50%);
@@ -4021,18 +4023,18 @@ function mainLoop() {
 }
 
 // ══════════════════ iOS SCROLL PREVENTION ══════════════════
-// Safari allows momentum scrolling on canvas elements by default,
-// which fires touchmove on the canvas and disrupts the joystick.
-// preventDefault on the document-level touchmove stops this.
+// Prevent canvas scroll/drag interference on Safari.
+// IMPORTANT: only preventDefault on the canvas elements themselves —
+// a global touchend preventDefault kills synthetic click events on
+// buttons, making the start screen and all UI unresponsive.
 document.addEventListener('touchmove', e => {
   if (e.target === threeCanvas || e.target === fxCanvas) e.preventDefault();
 }, { passive: false });
 
-// Prevent double-tap zoom (Safari zooms in on double-tap by default
-// which completely breaks the game viewport).
-document.addEventListener('touchend', e => {
-  e.preventDefault();
-}, { passive: false });
+// Prevent double-tap zoom ONLY on the game canvases.
+// Never on the document globally — that breaks button taps on iOS.
+threeCanvas.addEventListener('touchend', e => { e.preventDefault(); }, { passive: false });
+fxCanvas.addEventListener('touchend',   e => { e.preventDefault(); }, { passive: false });
 
 // ══════════════════ PWA REGISTRATION ══════════════════
 if ('serviceWorker' in navigator) {
