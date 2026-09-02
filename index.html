@@ -2873,6 +2873,15 @@ const G = {
     buildEnv(Date.now()); // regenerate world each run
     this.updateRoster();
     this.spawnWave();
+    // Snap camera immediately to follow position so it doesn't
+    // lerp slowly from the far intro-orbit position.
+    const snapUp  = this.player.dir;
+    const snapFwd = this.player.forward;
+    const snapTarget = snapUp.clone().multiplyScalar(PLANET_R)
+      .addScaledVector(snapUp, 7).addScaledVector(snapFwd, -8);
+    camera.position.copy(snapTarget);
+    camera.up.copy(snapUp);
+    camera.lookAt(snapUp.clone().multiplyScalar(PLANET_R).addScaledVector(snapFwd, 1.0));
     this.log('Al Von Kan opens his eyes. The ground curves beneath him.', true);
     this.log('Cold light pulses in your palms.');
   },
@@ -2902,7 +2911,7 @@ const G = {
     for (const c of cfg) {
       for (let i = 0; i < c.count; i++) {
         const st = {...this.enemyStats[c.type]};
-        const dir = this.randomFarDir(0.55);
+        const dir = this.randomFarDir(0.28);
         // Behaviour variants: wave 3+ randomly assign rusher/ranger/pack
         let variant = 'normal';
         if (this.wave >= 3) {
@@ -3117,6 +3126,34 @@ const G = {
   updatePlayerMovement(dt) {
     const up = this.player.dir;
 
+    // ── Tap-to-move: steer toward tapped surface point ────────
+    if (this.player._tapTarget) {
+      const td = this.player._tapTarget;
+      const angDist = td.angleTo(this.player.dir);
+      if (angDist > 0.04) {
+        // Rotate player.dir toward tap target
+        const axis = new THREE.Vector3().crossVectors(this.player.dir, td);
+        if (axis.lengthSq() > 1e-8) {
+          axis.normalize();
+          const step = Math.min(angDist, this.MOVE_SPEED * dt / PLANET_R);
+          const q = new THREE.Quaternion().setFromAxisAngle(axis, step);
+          this.player.dir.applyQuaternion(q).normalize();
+          // Also steer forward toward the target
+          this.player.forward.lerp(td.clone().sub(this.player.dir).normalize(), 0.2).normalize();
+          const df = this.player.forward.dot(this.player.dir);
+          this.player.forward.addScaledVector(this.player.dir, -df).normalize();
+        }
+        this.player.state = 'walk';
+        if (this.frame % 14 === 0) Audio.sfxMove();
+      } else {
+        this.player._tapTarget = null; // arrived
+        this.player.state = 'idle';
+      }
+      // Don't process joystick/keyboard if tap-moving
+      this.updateHUD();
+      return;
+    }
+
     // ── Apply camera yaw rotation to player.forward ──────────────
     // cameraYaw is accumulated by mouse-drag / right-touch. Rotating
     // forward around the surface-normal (up) is what pivots the
@@ -3169,7 +3206,7 @@ const G = {
     }
   },
 
-  updateCamera() {
+  updateCamera(dt) {
     const up = this.player.dir;
     const fwd = this.player.forward;
     const worldPos = up.clone().multiplyScalar(PLANET_R);
@@ -3181,7 +3218,7 @@ const G = {
     // viewer. Pulling the camera up and back shrinks that effect and,
     // more importantly, gives visibility across the curved surface so
     // enemies approaching from any direction are actually seen.
-    let camPos = worldPos.clone().addScaledVector(up, 13).addScaledVector(fwd, -6);
+    let camPos = worldPos.clone().addScaledVector(up, 7).addScaledVector(fwd, -8);
     const radialDist = camPos.length();
     if (radialDist < PLANET_R + 3) camPos.setLength(PLANET_R + 5);
 
@@ -3207,7 +3244,7 @@ const G = {
     const p = this.player;
 
     this.updatePlayerMovement(dt);
-    this.updateCamera();
+    this.updateCamera(dt);
     this.updateTarget();
 
     // Mana regen
@@ -4037,6 +4074,51 @@ function mainLoop() {
 
   renderer.render(scene, camera);
 }
+
+// ══════════════════ CLICK / TAP TO MOVE ══════════════════
+// Tap/click on the Three.js canvas = move player toward that
+// point on the planet surface via raycasting. UI buttons are
+// on higher z-index layers so they don't reach this handler.
+const _raycaster = new THREE.Raycaster();
+const _clickMouse = new THREE.Vector2();
+
+function handleCanvasClick(clientX, clientY) {
+  if (!G.running) return;
+  // Convert screen coords to NDC
+  _clickMouse.x =  (clientX / window.innerWidth)  * 2 - 1;
+  _clickMouse.y = -(clientY / window.innerHeight) * 2 + 1;
+  _raycaster.setFromCamera(_clickMouse, camera);
+
+  // Intersect with the planet sphere
+  const planetSphere = new THREE.Sphere(new THREE.Vector3(0,0,0), PLANET_R);
+  const ray = _raycaster.ray;
+  const target = new THREE.Vector3();
+  const hit = ray.intersectSphere(planetSphere, target);
+  if (!hit) return;
+
+  // target is a world-space point on the planet — normalise to
+  // get the surface direction, then set as player move target.
+  const targetDir = target.normalize();
+
+  // Only move if the tap is reasonably far from current position
+  if (targetDir.angleTo(G.player.dir) < 0.05) return;
+
+  G.player._tapTarget = targetDir;
+}
+
+threeCanvas.addEventListener('click', e => {
+  handleCanvasClick(e.clientX, e.clientY);
+});
+threeCanvas.addEventListener('touchstart', e => {
+  if (e.touches.length === 1) {
+    // Single tap on canvas = move, but only if not a joystick touch
+    // (joystick zone is left 46% of screen)
+    const t = e.touches[0];
+    if (t.clientX > window.innerWidth * 0.46) {
+      handleCanvasClick(t.clientX, t.clientY);
+    }
+  }
+}, { passive: true });
 
 // ══════════════════ iOS SCROLL PREVENTION ══════════════════
 // Prevent canvas scroll/drag interference on Safari.
