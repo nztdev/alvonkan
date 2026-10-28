@@ -59,7 +59,7 @@ button.go{border-color:var(--gold);color:var(--gold)}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 const V3 = THREE.Vector3, R = 80, $ = id => document.getElementById(id);
-const TIERS = { high: { cap: 450, pr: Math.min(window.devicePixelRatio || 1, 2), eyes: true }, low: { cap: 140, pr: 1, eyes: false } };
+const TIERS = { high: { cap: 450, pr: Math.min(window.devicePixelRatio || 1, 2), eyes: true }, low: { cap: 140, pr: Math.min(window.devicePixelRatio || 1, 1.5), eyes: false } };
 let tierSel = 'auto', tier = TIERS.high, state = 'menu';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -91,12 +91,13 @@ const NOISE = (() => { const c = document.createElement('canvas'); c.width = c.h
 
 // ── World ──
 (function buildWorld() {
-  const c = document.createElement('canvas'); c.width = 512; c.height = 256; const g = c.getContext('2d');
+  const c = document.createElement('canvas'); c.width = 2048; c.height = 1024; const g = c.getContext('2d'); g.scale(4, 4);
   g.fillStyle = '#1a1030'; g.fillRect(0, 0, 512, 256);
   for (let i = 0; i < 2500; i++) { const s = 20 + Math.random() * 30; g.fillStyle = `rgba(${s + 30},${s + 20},${s + 55},${.15 + Math.random() * .3})`; g.fillRect(Math.random() * 512, Math.random() * 256, 2 + Math.random() * 4, 2 + Math.random() * 4); }
   g.strokeStyle = 'rgba(90,50,160,.4)'; for (let i = 0; i < 30; i++) { g.beginPath(); let x = Math.random() * 512, y = Math.random() * 256; g.moveTo(x, y); for (let j = 0; j < 5; j++) { x += rnd(-30, 30); y += rnd(-30, 30); g.lineTo(x, y); } g.stroke(); }
   g.lineWidth = 2; for (let i = 0; i < 16; i++) { g.strokeStyle = `rgba(217,119,6,${.15 + Math.random() * .2})`; g.beginPath(); let x = Math.random() * 512, y = Math.random() * 256; g.moveTo(x, y); for (let j = 0; j < 6; j++) { x += rnd(-25, 25); y += rnd(-25, 25); g.lineTo(x, y); } g.stroke(); }
-  const tex = new THREE.CanvasTexture(c); tex.encoding = THREE.sRGBEncoding;
+  for (let i = 0; i < 40000; i++) { g.fillStyle = `rgba(${40 + Math.random() * 60 | 0},${30 + Math.random() * 40 | 0},${80 + Math.random() * 80 | 0},${.08 + Math.random() * .15})`; g.fillRect(Math.random() * 512, Math.random() * 256, .5 + Math.random() * 1.2, .5 + Math.random() * 1.2); }
+  const tex = new THREE.CanvasTexture(c); tex.encoding = THREE.sRGBEncoding; tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
   const pmesh = new THREE.Mesh(new THREE.SphereGeometry(R, 96, 64), new THREE.MeshStandardMaterial({ map: tex, bumpMap: tex, bumpScale: 2.5, roughness: .9 })); pmesh.receiveShadow = true; scene.add(pmesh);
   const cr = inst(new THREE.ConeGeometry(.8, 1, 5).translate(0, .5, 0), new THREE.MeshStandardMaterial({ color: 0x7c3aed, emissive: 0x5b21b6, emissiveIntensity: .8, roughness: .2 }), 90);
   for (let i = 0; i < 90; i++) { const h = rnd(2, 6); put(cr, i, rdir(), 0, 1, h, 1); } cr.count = 90;
@@ -211,13 +212,51 @@ const WF = [
   limb(bx(.16, .9, .16), -.22, .45, .55, FU2, .9, .9), limb(bx(.16, .9, .16), .22, .45, .55, FU2, -.9, .9),
   limb(bx(.16, .9, .16), -.22, .45, -.5, FU2, -.9, .9), limb(bx(.16, .9, .16), .22, .45, -.5, FU2, .9, .9)
 ];
-const EM = [beast(SK, 9, EMAX), beast(GB, 11, EMAX), beast(WF, 12, EMAX)], emesh = { count: 0 }, ehead = { count: 0 }, eeyes = { count: 0 };
+function build2(parts, ang) {
+  const P_ = [], N = [], U = [], C = [];
+  for (const p of parts) {
+    const g = p.g.toNonIndexed(); if (p.s) g.scale(p.s[0], p.s[1], p.s[2]); if (p.rx) g.rotateX(p.rx); if (p.rz) g.rotateZ(p.rz); g.translate(p.p[0], p.p[1], p.p[2]);
+    if (p.w) { g.translate(0, -p.v, 0); g.rotateX(ang * p.w); g.translate(0, p.v, 0); }
+    const a = g.attributes, col = new THREE.Color(p.c);
+    for (let i = 0; i < a.position.count; i++) { P_.push(a.position.getX(i), a.position.getY(i), a.position.getZ(i)); N.push(a.normal.getX(i), a.normal.getY(i), a.normal.getZ(i)); U.push(a.uv.getX(i), a.uv.getY(i)); C.push(col.r, col.g, col.b); }
+  }
+  const G = new THREE.BufferGeometry(), F = THREE.Float32BufferAttribute;
+  G.setAttribute('position', new F(P_, 3)); G.setAttribute('normal', new F(N, 3)); G.setAttribute('uv', new F(U, 2)); G.setAttribute('color', new F(C, 3));
+  return G;
+}
+// Walk cycle baked as 6 pre-posed meshes (no custom shaders, so it runs on every GPU/browser)
+const herd = (parts, spd, max, extra) => {
+  const N = 6, body = parts.filter(p => !p.e), eyes = parts.filter(p => p.e), frames = [], n = new Array(N).fill(0); let ek = 0;
+  const mat = new THREE.MeshStandardMaterial(Object.assign({ vertexColors: true, roughness: .7, map: NOISE }, extra));
+  for (let k = 0; k < N; k++) { const m = inst(build2(body, Math.sin(k / N * Math.PI * 2) * .9), mat, max); m.castShadow = true; frames.push(m); }
+  const em = inst(build2(eyes, 0), new THREE.MeshBasicMaterial({ vertexColors: true }), max);
+  return {
+    begin() { n.fill(0); ek = 0; },
+    add(dir, f, s, ph, col) { const idx = Math.floor((((performance.now() * .001 * spd + ph) / 6.2832) % 1 + 1) % 1 * N), me = frames[idx], k = n[idx]++; putS(me, k, dir, f, s); me.setColorAt(k, col); em.setMatrixAt(ek, _m); em.setColorAt(ek++, col); },
+    end() { frames.forEach((m, j) => { m.count = n[j]; m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; }); em.count = ek; em.instanceMatrix.needsUpdate = true; if (em.instanceColor) em.instanceColor.needsUpdate = true; }
+  };
+};
+// Simplest possible material path: vertex colours only, no instance colours, no textures, no shadow casting
+const herd2 = (parts, spd, max, tint) => {
+  const N = 6, body = parts.filter(p => !p.e), eyes = parts.filter(p => p.e), frames = [], n = new Array(N).fill(0); let ek = 0;
+  const tg = G => { if (tint) { const c = G.attributes.color.array; for (let i = 0; i < c.length; i += 3) { c[i] *= tint.r; c[i + 1] *= tint.g; c[i + 2] *= tint.b; } } return G; };
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .75, emissive: tint ? 0x2a0a66 : 0x000000, emissiveIntensity: .6 });
+  for (let k = 0; k < N; k++) frames.push(inst(tg(build2(body, Math.sin(k / N * Math.PI * 2) * .6)), mat, max));
+  const em = inst(tg(build2(eyes, 0)), new THREE.MeshBasicMaterial({ vertexColors: true }), max);
+  return {
+    get c() { return ek; },
+    begin() { n.fill(0); ek = 0; },
+    add(dir, f, s, ph) { const idx = Math.floor((((performance.now() * .001 * spd + ph) / 6.2832) % 1 + 1) % 1 * N), me = frames[idx], k = n[idx]++; putS(me, k, dir, f, s); em.setMatrixAt(ek++, _m); },
+    end() { frames.forEach((m, j) => { m.count = n[j]; m.instanceMatrix.needsUpdate = true; }); em.count = ek; em.instanceMatrix.needsUpdate = true; }
+  };
+};
+const EM = [herd2(SK, 9, EMAX), herd2(GB, 11, EMAX), herd2(WF, 12, EMAX)], emesh = { count: 0 }, ehead = { count: 0 }, eeyes = { count: 0 };
 
 let enemies = [], gems = [], projs = [], wolves = [], time = 0, kills = 0, spawnAcc = 0, orbitAng = 0, orbitTick = 0, daggerCd = 0;
 const W = { orbit: 1, dagger: 0, wolf: 0 }, PS = { hp: 0, spd: 0, mag: 0, pow: 0 };
-const omesh = beast(SK, 9, 10, { emissive: 0x3b0a8a, emissiveIntensity: .8, roughness: .5 });
+const omesh = herd2(SK, 9, 10, SHC);
 const dmesh = inst(new THREE.ConeGeometry(.25, 1.8, 4).rotateX(Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x5eead4 }), 80);
-const wmesh = beast(WF, 12, 8, { emissive: 0x3b0a8a, emissiveIntensity: .8, roughness: .5 });
+const wmesh = herd2(WF, 12, 8, SHC);
 const gmesh = inst(new THREE.OctahedronGeometry(.5), new THREE.MeshStandardMaterial({ color: 0x34d399, emissive: 0x10b981, emissiveIntensity: 1.6, roughness: .15, metalness: .4 }), 600);
 
 
@@ -295,7 +334,8 @@ function doneTip(id) { if (tipId === id) hideTip(); }
 // ── Intro + menu demo: Al scuttles along, chased by the horde, shadows fighting back ──
 let demo = true, dT = 0, introDone = false;
 Object.assign(W, { orbit: 3, dagger: 2, wolf: 3 }); $('hud').style.display = 'none';
-if ((navigator.hardwareConcurrency || 8) <= 4 || (navigator.deviceMemory || 8) <= 2) tier = TIERS.low;
+const LOWDEV = (navigator.deviceMemory || 8) <= 2 || (!/iPhone|iPad|iPod/.test(navigator.userAgent) && (navigator.hardwareConcurrency || 8) <= 4);
+if (LOWDEV) tier = TIERS.low;
 sunL.castShadow = tier.cap > 200;
 for (let i = 0; i < 45; i++) spawnEnemy();
 function finishIntro() { introDone = true; $('cap').style.opacity = 0; $('title').style.opacity = 1; $('title').style.pointerEvents = 'auto'; }
@@ -315,9 +355,19 @@ function demoCam() {
   }
 }
 
+// ── Diagnostics: surfaces GPU/shader errors on screen so they can be reported (remove once stable) ──
+(() => {
+  const box = document.createElement('div'); box.style.cssText = 'position:fixed;left:6px;right:6px;bottom:50px;max-height:35%;overflow:auto;background:rgba(120,0,0,.88);color:#fff;font:10px/1.3 monospace;padding:6px;z-index:99;display:none;user-select:text;-webkit-user-select:text'; document.body.appendChild(box); let n = 0;
+  const log = m => { if (n++ > 5) return; box.style.display = 'block'; box.textContent += String(m).slice(0, 900) + '\n\n'; };
+  const ce = console.error; console.error = (...a) => { log(a.join(' ')); ce.apply(console, a); };
+  addEventListener('error', e => log('ERR ' + e.message + ' line ' + e.lineno));
+  const st = document.createElement('div'); st.style.cssText = 'position:fixed;left:6px;bottom:4px;font:9px monospace;color:#9ca3af;opacity:.7;pointer-events:none;z-index:99;display:' + (location.hash === '#debug' ? 'block' : 'none'); document.body.appendChild(st);
+  setInterval(() => { const bad = (renderer.info.programs || []).filter(p => p.diagnostics && p.diagnostics.runnable === false).length; st.textContent = `calls ${renderer.info.render.calls} tris ${renderer.info.render.triangles} enemies ${enemies.length} drawn ${EM.map(h => h.c).join('/')} badShaders ${bad}`; }, 500);
+})();
+
 // ── Game flow ──
 function startGame() {
-  tier = TIERS[tierSel === 'auto' ? ((navigator.hardwareConcurrency || 8) <= 4 || (navigator.deviceMemory || 8) <= 2 ? 'low' : 'high') : tierSel];
+  tier = TIERS[tierSel === 'auto' ? (LOWDEV ? 'low' : 'high') : tierSel];
   sunL.castShadow = tier.cap > 200; resize();
   Object.assign(P, { hp: 100, max: 100, xp: 0, lvl: 1, spd: 17, mag: 12, pow: 1, iframe: 0 });
   P.dir.set(0, 1, 0); P.fwd.set(0, 0, -1); P.face.set(0, 0, -1);
@@ -363,7 +413,7 @@ function update(dt) {
   }
 
   // Bone Warriors (orbit)
-  const n = W.orbit ? 1 + W.orbit : 0; orbitAng += dt * (2 + .25 * W.orbit); orbitTick -= dt;
+  const n = W.orbit ? 1 + W.orbit : 0; orbitAng += dt * (2 + .25 * W.orbit); orbitTick -= dt; omesh.begin();
   const tick = orbitTick <= 0; if (tick) orbitTick = .25;
   _r.crossVectors(P.fwd, P.dir);
   for (let i = 0; i < n; i++) {
@@ -371,10 +421,10 @@ function update(dt) {
     RT.crossVectors(P.fwd, P.dir); _t.set(0, 0, 0).addScaledVector(P.fwd, Math.cos(a)).addScaledVector(RT, Math.sin(a));
     const od = P.dir.clone().multiplyScalar(Math.cos(ra)).addScaledVector(_t, Math.sin(ra)).normalize();
     _a.set(0, 0, 0).addScaledVector(P.fwd, -Math.sin(a)).addScaledVector(RT, Math.cos(a)); _a.addScaledVector(od, -_a.dot(od)).normalize();
-    putB(omesh, i, od, 0, _a); omesh.setColorAt(i, SHC); omesh.ph.array[i] = i * 1.7;
+    omesh.add(od, _a, 1, i * 1.7, SHC);
     if (tick) for (const e of enemies) if (e.dir.angleTo(od) * R < 2.8) hurt(e, 6 * (1 + .3 * W.orbit));
   }
-  omesh.count = n; omesh.instanceMatrix.needsUpdate = true; omesh.ph.needsUpdate = true; if (omesh.instanceColor) omesh.instanceColor.needsUpdate = true;
+  omesh.end();
 
   // Shadow Raiders (daggers)
   daggerCd -= dt;
@@ -390,15 +440,15 @@ function update(dt) {
   projs.forEach((p, i) => putB(dmesh, i, p.dir, 1.2, p.vel)); dmesh.count = projs.length; dmesh.instanceMatrix.needsUpdate = true;
 
   // Shadow Wolves
-  while (wolves.length < Math.min(W.wolf, 6)) wolves.push({ dir: P.dir.clone(), f: P.fwd.clone(), cd: 0 });
+  while (wolves.length < Math.min(W.wolf, 6)) wolves.push({ dir: P.dir.clone(), f: P.fwd.clone(), cd: 0 }); wmesh.begin();
   wolves.forEach((w, i) => {
     w.cd -= dt; const t = nearest(w.dir); const goal = t && t.a < .9 ? t.e.dir : P.dir;
     tangent(w.dir, goal, _t); w.f.lerp(_t, .3).normalize(); const d = w.dir.angleTo(goal) * R;
     if (d > (t && t.a < .9 ? 1.6 : 7)) step(w.dir, _t, 26 * dt);
     if (t && t.a < .9 && d < 2.4 && w.cd <= 0) { hurt(t.e, 14 * (1 + .25 * W.wolf)); w.cd = .45; }
-    w.f.addScaledVector(w.dir, -w.f.dot(w.dir)).normalize(); putB(wmesh, i, w.dir, 0, w.f); wmesh.setColorAt(i, SHC); wmesh.ph.array[i] = i * 2.1;
+    w.f.addScaledVector(w.dir, -w.f.dot(w.dir)).normalize(); wmesh.add(w.dir, w.f, 1, i * 2.1, SHC);
   });
-  wmesh.count = Math.min(wolves.length, 8); wmesh.instanceMatrix.needsUpdate = true; wmesh.ph.needsUpdate = true; if (wmesh.instanceColor) wmesh.instanceColor.needsUpdate = true;
+  wmesh.end();
 
   // deaths
   for (let i = enemies.length - 1; i >= 0; i--) if (enemies[i].hp <= 0) { const e = enemies[i]; gems.push({ dir: e.dir.clone(), xp: TYPES[e.ty].xp }); kills++; enemies[i] = enemies[enemies.length - 1]; enemies.pop(); }
@@ -425,9 +475,9 @@ function update(dt) {
 
 function render() {
   // enemies
-  const cnt = [0, 0, 0];
-  enemies.forEach((e, i) => { const me = EM[e.ty], k = cnt[e.ty]++, fl = e.flash > 0 ? 3 : 1; putS(me, k, e.dir, e.f, SCL[e.ty]); _c.setRGB(fl, fl, fl); me.setColorAt(k, _c); me.ph.array[k] = e.ph; put(eshad, i, e.dir, .06, SCL[e.ty] * 1.2, 1, SCL[e.ty] * 1.2); });
-  EM.forEach((m, j) => { m.count = cnt[j]; m.instanceMatrix.needsUpdate = true; m.ph.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; });
+  EM.forEach(h => h.begin());
+  enemies.forEach((e, i) => { EM[e.ty].add(e.dir, e.f, SCL[e.ty] * (e.flash > 0 ? 1.2 : 1), e.ph); put(eshad, i, e.dir, .06, SCL[e.ty] * 1.2, 1, SCL[e.ty] * 1.2); });
+  EM.forEach(h => h.end());
   eshad.count = enemies.length; eshad.instanceMatrix.needsUpdate = true;
   
   const bob = Math.sin(performance.now() * .006) * .15;
