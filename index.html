@@ -117,6 +117,7 @@ const NOISE = (() => { const c = document.createElement('canvas'); c.width = c.h
   for (let i = 0; i < 12; i++) { const s = rnd(1, 1.8); put(ar, i, rdir(), 0, s, s, s); } ar.count = 12;
   const sm = inst(new THREE.DodecahedronGeometry(1, 0), new THREE.MeshStandardMaterial({ color: 0x2a1a4a, emissive: 0x2d1b69, emissiveIntensity: .5, roughness: .7 }), 16), shards = [];
   for (let i = 0; i < 16; i++) shards.push({ d: rdir(), h: rnd(16, 34), s: rnd(1.5, 4) }); sm.count = 16;
+  window.worldRefs = { pmesh, pl, ar, pb, torches, fl };
   window.animWorld = t => {
     torches.forEach((o, i) => { const f = 1 + Math.sin(t * 9 + i * 1.7) * .18; put(fl, i, o.d, o.h + .9, f, f * 1.2, f); }); fl.instanceMatrix.needsUpdate = true;
     shards.forEach((s, i) => put(sm, i, s.d, s.h + Math.sin(t * .6 + i) * 1.2, s.s, s.s * 1.4, s.s)); sm.instanceMatrix.needsUpdate = true;
@@ -459,6 +460,72 @@ function demoCam() {
   addEventListener('error', e => log('ERR ' + e.message + ' line ' + e.lineno));
   const st = document.createElement('div'); st.style.cssText = 'position:fixed;left:6px;bottom:4px;font:9px monospace;color:#9ca3af;opacity:.7;pointer-events:none;z-index:99;display:' + (location.hash === '#debug' ? 'block' : 'none'); document.body.appendChild(st);
   setInterval(() => { const bad = (renderer.info.programs || []).filter(p => p.diagnostics && p.diagnostics.runnable === false).length; st.textContent = `calls ${renderer.info.render.calls} tris ${renderer.info.render.triangles} enemies ${enemies.length} drawn ${EM.map(h => h.c).join('/')} badShaders ${bad}`; }, 500);
+})();
+
+// ── World assets: rock textures, night-sky dome and prop models (each falls back to the built-in look if missing) ──
+const WA = {
+  ground_c: ['/_blob/e43ce03454e54a91ca525735ee95fc41', 'ground_c.jpg'], ground_n: ['/_blob/2a0fbda0734fa1ea1a460db87d23ee86', 'ground_n.jpg'],
+  rock035: ['/_blob/dfe6756280dbc0a090ead7fc762e77d8', 'rock035_c.jpg'], rock037: ['/_blob/a2e231ee6969ed90a08e383ad8940105', 'rock037_c.jpg'],
+  sky: ['/_blob/e074b569e5d5e630c4ccdc473c6b313f', 'sky.jpg'], props: { id: '1a0b91a3b166fc2438c408e2682d4834', file: 'props.glb' }
+};
+function loadTex(key, srgb, cb) {
+  const urls = WA[key], L = new THREE.TextureLoader();
+  const go = i => { if (i < urls.length) L.load(urls[i], t => { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 4; if (srgb) t.encoding = THREE.sRGBEncoding; cb(t); }, undefined, () => go(i + 1)); };
+  go(0);
+}
+// cube-sphere: six tiled faces, so rock textures repeat evenly with no pinching at the poles
+function cubeSphere(r, n, rep) {
+  const P = [], N = [], U = [], I = [], v = new THREE.Vector3();
+  const F = [[[1, 0, 0], [0, 0, -1], [0, 1, 0]], [[-1, 0, 0], [0, 0, 1], [0, 1, 0]], [[0, 1, 0], [1, 0, 0], [0, 0, -1]], [[0, -1, 0], [1, 0, 0], [0, 0, 1]], [[0, 0, 1], [1, 0, 0], [0, 1, 0]], [[0, 0, -1], [-1, 0, 0], [0, 1, 0]]];
+  F.forEach(([nn, a, b], f) => {
+    for (let j = 0; j <= n; j++) for (let i = 0; i <= n; i++) {
+      const s = i / n, t = j / n, x = Math.tan((2 * s - 1) * Math.PI / 4), y = Math.tan((2 * t - 1) * Math.PI / 4);
+      v.set(nn[0] + a[0] * x + b[0] * y, nn[1] + a[1] * x + b[1] * y, nn[2] + a[2] * x + b[2] * y).normalize();
+      P.push(v.x * r, v.y * r, v.z * r); N.push(v.x, v.y, v.z); U.push(s * rep, t * rep);
+    }
+    const base = f * (n + 1) * (n + 1);
+    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) { const a0 = base + j * (n + 1) + i, a1 = a0 + 1, a2 = a0 + n + 1, a3 = a2 + 1; I.push(a0, a1, a2, a1, a3, a2); }
+  });
+  const g = new THREE.BufferGeometry(), FA = THREE.Float32BufferAttribute;
+  g.setAttribute('position', new FA(P, 3)); g.setAttribute('normal', new FA(N, 3)); g.setAttribute('uv', new FA(U, 2)); g.setIndex(I); return g;
+}
+(function worldAssets() {
+  const W_ = window.worldRefs; if (!W_) return;
+  loadTex('ground_c', true, c => loadTex('ground_n', false, n => {
+    W_.pmesh.geometry.dispose(); W_.pmesh.geometry = cubeSphere(R, 48, 9);
+    const m = W_.pmesh.material; m.map = c; m.normalMap = n; m.normalScale.set(1.3, 1.3); m.color.setRGB(1.25, 1.3, 1.3); m.roughness = .92; m.needsUpdate = true;
+  }));
+  loadTex('rock037', true, t => { t.repeat.set(1, 3); W_.pl.material.map = t; W_.pl.material.color.setRGB(1.2, 1.2, 1.2); W_.pl.material.needsUpdate = true; });
+  loadTex('rock035', true, t => { W_.pb.material.map = t; W_.pb.material.color.setRGB(1.2, 1.3, 1.4); W_.pb.material.needsUpdate = true; });
+  loadTex('sky', true, t => {
+    t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; const g = new THREE.SphereGeometry(470, 48, 24); g.scale(-1, 1, 1);
+    const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ map: t, side: THREE.BackSide, fog: false, depthWrite: false, color: new THREE.Color(1.7, 1.7, 1.8) })); m.renderOrder = -10; scene.add(m);
+  });
+  (async () => {
+    try {
+      let buf; const PS = WA.props;
+      try { const tx = await (await fetch('/_blob/' + PS.id)).text(); const b = atob(tx.trim()), a = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) a[i] = b.charCodeAt(i); buf = a.buffer; }
+      catch (e) { const r = await fetch(PS.file); if (!r.ok) throw new Error('props ' + r.status); buf = await r.arrayBuffer(); }
+      new THREE.GLTFLoader().parse(buf, '', gltf => {
+        const hi = tier.cap > 200, tmp = new THREE.Quaternion();
+        const spawn = (name, n, smin, smax, dirs) => {
+          const o = gltf.scene.getObjectByName(name); if (!o || !o.geometry) return null;
+          const mt = o.material; mt.roughness = .8; if (mt.map) { mt.emissiveMap = mt.map; mt.emissive.setHex(0x556677); mt.emissiveIntensity = .22; }
+          const im = new THREE.InstancedMesh(o.geometry, mt, n); im.castShadow = true; im.receiveShadow = true; im.frustumCulled = false;
+          for (let i = 0; i < n; i++) {
+            let d = dirs ? dirs[i] : rdir(); if (!dirs) { let k = 0; while (d.angleTo(_up) < .22 && k++ < 20) d = rdir(); }
+            const s = rnd(smin, smax); _q.setFromUnitVectors(_up, d); tmp.setFromAxisAngle(_up, rnd(0, 6.283)); _q.multiply(tmp);
+            _p.copy(d).multiplyScalar(R); _s.set(s, s, s); _m.compose(_p, _q, _s); im.setMatrixAt(i, _m);
+          }
+          scene.add(im); return im;
+        };
+        const tdirs = W_.torches.map(t => t.d);
+        if (spawn('brazier', tdirs.length, 2.9, 2.9, tdirs)) { W_.torches.forEach((o, i) => { o.h = 4.3; put(W_.pl, i, o.d, 0, 0, 0, 0); }); W_.pl.instanceMatrix.needsUpdate = true; }
+        if (spawn('arch', hi ? 10 : 6, 5.5, 7.5)) W_.ar.count = 0;
+        spawn('tombstone', hi ? 42 : 22, 1.4, 2.1);
+      }, e => console.warn('props parse failed', e));
+    } catch (e) { console.warn('props not loaded', e); }
+  })();
 })();
 
 // ── Game flow ──
