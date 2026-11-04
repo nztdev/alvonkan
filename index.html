@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Al Von Kan: Shadow Survivors</title>
 <style>
-:root{--void:#04020a;--fg:#e9e4f0;--dim:#9ca3af;--mana:#a78bfa;--gold:#fbbf24;--hp:#ef4444;--xp:#34d399;color-scheme:dark;box-sizing:border-box}
+:root{--void:#04020a;--fg:#e9e4f0;--dim:#9ca3af;--mana:#7ee8d0;--gold:#fbbf24;--hp:#ef4444;--xp:#34d399;color-scheme:dark;box-sizing:border-box}
 *{margin:0;padding:0;box-sizing:border-box;user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent}
 html,body{width:100%;height:100%;overflow:hidden;background:var(--void);color:var(--fg);font-family:Georgia,'Times New Roman',serif}
 canvas{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none}
@@ -18,15 +18,15 @@ canvas{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:
 #time{font-size:22px;color:var(--gold);text-shadow:0 0 14px #d97706}
 #flash{position:fixed;inset:0;background:#8b0000;opacity:0;pointer-events:none;transition:opacity .2s}
 .ov{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:rgba(4,2,10,.88);text-align:center;padding:20px;overflow-y:auto}
-h1{font-size:clamp(34px,8vw,58px);color:var(--mana);text-shadow:0 0 40px #5b21b6;letter-spacing:3px}
+h1{font-size:clamp(34px,8vw,58px);color:var(--mana);text-shadow:0 0 40px #0f766e;letter-spacing:3px}
 .sub{font-size:12px;letter-spacing:4px;color:var(--gold);text-transform:uppercase}
 p.s{max-width:460px;font-style:italic;color:var(--dim);line-height:1.6;font-size:14px}
-button{font:inherit;font-size:13px;letter-spacing:3px;text-transform:uppercase;padding:12px 26px;background:transparent;border:1px solid #5b21b6;color:var(--mana);cursor:pointer;touch-action:manipulation}
+button{font:inherit;font-size:13px;letter-spacing:3px;text-transform:uppercase;padding:12px 26px;background:transparent;border:1px solid #14786b;color:var(--mana);cursor:pointer;touch-action:manipulation}
 button:active,button.on{background:rgba(92,33,182,.3);border-color:var(--mana)}
 button.go{border-color:var(--gold);color:var(--gold)}
 .tiers{display:flex;gap:6px}.tiers button{padding:8px 14px;font-size:11px}
 #cards{display:flex;gap:12px;flex-wrap:wrap;justify-content:center}
-.card{width:190px;padding:16px 12px;border:1px solid #5b21b6;background:rgba(20,10,40,.9);cursor:pointer;letter-spacing:0;text-transform:none}
+.card{width:190px;padding:16px 12px;border:1px solid #14786b;background:rgba(20,10,40,.9);cursor:pointer;letter-spacing:0;text-transform:none}
 .card b{display:block;color:var(--gold);font-size:15px;margin-bottom:4px}.card em{color:var(--mana);font-size:11px;display:block;margin-bottom:6px}.card span{color:var(--dim);font-size:12px}
 #tip{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(380px,86vw);padding:22px 20px;background:rgba(14,7,30,.96);border:2px solid var(--gold);box-shadow:0 0 0 100vmax rgba(0,0,0,.6),0 0 40px rgba(217,119,6,.35);display:none;flex-direction:column;gap:10px;text-align:center;z-index:30;cursor:pointer}
 #tip b{color:var(--gold);letter-spacing:4px;font-size:18px;text-transform:uppercase}#tip span{font-size:16px;line-height:1.5}
@@ -59,6 +59,14 @@ button.go{border-color:var(--gold);color:var(--gold)}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/libs/meshopt_decoder.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/GammaCorrectionShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/MaskPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
 <script>
 const V3 = THREE.Vector3, R = 80, $ = id => document.getElementById(id);
 const TIERS = { high: { cap: 450, pr: Math.min(window.devicePixelRatio || 1, 2), eyes: true }, low: { cap: 140, pr: Math.min(window.devicePixelRatio || 1, 1.5), eyes: false } };
@@ -69,14 +77,14 @@ document.body.prepend(renderer.domElement);
 renderer.outputEncoding = THREE.sRGBEncoding; renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.15;
 renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x020108).convertLinearToSRGB();
-scene.fog = new THREE.Fog(0x020108, 70, 230);
+scene.background = new THREE.Color(0x03080c).convertLinearToSRGB();
+scene.fog = new THREE.Fog(0x03080c, 70, 230);
 const camera = new THREE.PerspectiveCamera(55, 1, 0.5, 700);
-function resize() { renderer.setPixelRatio(tier.pr); renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); }
+function resize() { renderer.setPixelRatio(tier.pr); renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); if (window.composer) { composer.setPixelRatio(tier.pr); composer.setSize(innerWidth, innerHeight); } }
 addEventListener('resize', resize);
 
-scene.add(new THREE.HemisphereLight(0x6a5acd, 0x120a2a, 0.65));
-const sunL = new THREE.DirectionalLight(0xb4c4ff, 1.25); sunL.position.set(120, 160, 60); scene.add(sunL, sunL.target);
+scene.add(new THREE.HemisphereLight(0x4f7f9a, 0x0b1418, 0.7));
+const sunL = new THREE.DirectionalLight(0xa8d8e8, 1.25); sunL.position.set(120, 160, 60); scene.add(sunL, sunL.target);
 sunL.shadow.mapSize.set(1024, 1024); { const c = sunL.shadow.camera; c.left = -45; c.right = 45; c.top = 45; c.bottom = -45; c.near = 5; c.far = 220; } sunL.shadow.bias = -.002; sunL.shadow.normalBias = .4;
 
 // ── Helpers ──
@@ -101,7 +109,7 @@ const NOISE = (() => { const c = document.createElement('canvas'); c.width = c.h
   for (let i = 0; i < 40000; i++) { g.fillStyle = `rgba(${40 + Math.random() * 60 | 0},${30 + Math.random() * 40 | 0},${80 + Math.random() * 80 | 0},${.04 + Math.random() * .07})`; g.fillRect(Math.random() * 512, Math.random() * 256, .5 + Math.random() * 1.2, .5 + Math.random() * 1.2); }
   const tex = new THREE.CanvasTexture(c); tex.encoding = THREE.sRGBEncoding; tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
   const pmesh = new THREE.Mesh(new THREE.SphereGeometry(R, 96, 64), new THREE.MeshStandardMaterial({ map: tex, roughness: .95 })); pmesh.receiveShadow = true; scene.add(pmesh);
-  const cr = inst(new THREE.ConeGeometry(.8, 1, 5).translate(0, .5, 0), new THREE.MeshStandardMaterial({ color: 0x7c3aed, emissive: 0x5b21b6, emissiveIntensity: .8, roughness: .2 }), 90);
+  const cr = inst(new THREE.ConeGeometry(.8, 1, 5).translate(0, .5, 0), new THREE.MeshStandardMaterial({ color: 0x2dd4bf, emissive: 0x0f766e, emissiveIntensity: .9, roughness: .2 }), 90);
   for (let i = 0; i < 90; i++) { const h = rnd(2, 6); put(cr, i, rdir(), 0, 1, h, 1); } cr.count = 90;
   const pl = inst(new THREE.BoxGeometry(1.6, 1, 1.6).translate(0, .5, 0), new THREE.MeshStandardMaterial({ color: 0x241455, roughness: .8 }), 30);
   const fm = (c, op) => new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: op, depthWrite: false, blending: THREE.AdditiveBlending });
@@ -111,13 +119,13 @@ const NOISE = (() => { const c = document.createElement('canvas'); c.width = c.h
   const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.BufferAttribute(st, 3));
   scene.add(new THREE.Points(sg, new THREE.PointsMaterial({ color: 0xd4c5a9, size: 1.4, fog: false })));
   const moon = (x, y, z, r, col) => { const p = new V3(x, y, z); const m = new THREE.Mesh(new THREE.SphereGeometry(r, 24, 18), new THREE.MeshBasicMaterial({ color: col, fog: false })); m.position.copy(p); scene.add(m); const h = new THREE.Mesh(new THREE.SphereGeometry(r * 1.5, 24, 18), new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: .14, fog: false, depthWrite: false, blending: THREE.AdditiveBlending })); h.position.copy(p); scene.add(h); };
-  moon(-320, 210, -260, 34, 0x5b3fc4); moon(280, 280, 200, 15, 0xd8cfb8);
+  moon(-320, 210, -260, 34, 0xcfe8ef); moon(280, 280, 200, 15, 0xd8cfb8);
   const pb = inst(new THREE.DodecahedronGeometry(1, 0), new THREE.MeshStandardMaterial({ color: 0x2b1e4d, roughness: .95, map: NOISE }), 500);
   for (let i = 0; i < 500; i++) { const s = rnd(.2, .6); put(pb, i, rdir(), s * .3, s * 1.2, s * .8, s); } pb.count = 500;
   scene.add(new THREE.Mesh(new THREE.SphereGeometry(R * 1.07, 48, 32), new THREE.MeshBasicMaterial({ color: 0x3b8f9a, transparent: true, opacity: .08, side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false, fog: false })));
   const ar = inst(new THREE.TorusGeometry(3, .55, 6, 14, Math.PI), new THREE.MeshStandardMaterial({ color: 0x241455, roughness: .8 }), 12);
   for (let i = 0; i < 12; i++) { const s = rnd(1, 1.8); put(ar, i, rdir(), 0, s, s, s); } ar.count = 12;
-  const sm = inst(new THREE.DodecahedronGeometry(1, 0), new THREE.MeshStandardMaterial({ color: 0x2a1a4a, emissive: 0x2d1b69, emissiveIntensity: .5, roughness: .7 }), 16), shards = [];
+  const sm = inst(new THREE.DodecahedronGeometry(1, 0), new THREE.MeshStandardMaterial({ color: 0x14262e, emissive: 0x0d3b3a, emissiveIntensity: .5, roughness: .7 }), 16), shards = [];
   for (let i = 0; i < 16; i++) shards.push({ d: rdir(), h: rnd(16, 34), s: rnd(1.5, 4) }); sm.count = 16;
   window.worldRefs = { pmesh, pl, ar, pb, torches, fl };
   window.animWorld = t => {
@@ -259,7 +267,7 @@ const TYPES = [
   { c: 0x7a5a40, hp: 30, spd: 13, dmg: 10, s: [1.5, .7, 1.5], xp: 3 }
 ];
 const EMAX = 450;
-const UT = { value: 0 }, SHC = new THREE.Color(.45, .3, .8), SCL = [1.05, 1, 1.1];
+const UT = { value: 0 }, SHC = new THREE.Color(.3, .85, .65), SCL = [1.05, 1, 1.1];
 const bx = (w, h, d) => new THREE.BoxGeometry(w, h, d), sp = r => new THREE.SphereGeometry(r, 10, 8), co = (r, h) => new THREE.ConeGeometry(r, h, 5);
 function build(parts) {
   const P_ = [], N = [], U = [], C = [], L = [];
@@ -343,7 +351,7 @@ const herd = (parts, spd, max, extra) => {
 const herd2 = (parts, spd, max, tint) => {
   const N = 6, body = parts.filter(p => !p.e), eyes = parts.filter(p => p.e), frames = [], n = new Array(N).fill(0); let ek = 0;
   const tg = G => { if (tint) { const c = G.attributes.color.array; for (let i = 0; i < c.length; i += 3) { c[i] *= tint.r; c[i + 1] *= tint.g; c[i + 2] *= tint.b; } } return G; };
-  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .75, emissive: tint ? 0x2a0a66 : 0x000000, emissiveIntensity: .6 });
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .75, emissive: tint ? 0x0a4a3a : 0x000000, emissiveIntensity: .6 });
   for (let k = 0; k < N; k++) frames.push(inst(tg(build2(body, Math.sin(k / N * Math.PI * 2) * .6)), mat, max));
   const em = inst(tg(build2(eyes, 0)), new THREE.MeshBasicMaterial({ vertexColors: true }), max);
   return {
@@ -440,7 +448,7 @@ Object.assign(W, { orbit: 3, dagger: 2, wolf: 3 }); $('hud').style.display = 'no
 const LOWDEV = (navigator.deviceMemory || 8) <= 2 || (!/iPhone|iPad|iPod/.test(navigator.userAgent) && (navigator.hardwareConcurrency || 8) <= 4);
 if (LOWDEV) tier = TIERS.low;
 sunL.castShadow = tier.cap > 200;
-for (let i = 0; i < 45; i++) spawnEnemy();
+applyBloom(); for (let i = 0; i < 45; i++) spawnEnemy();
 function finishIntro() { introDone = true; $('cap').style.opacity = 0; $('title').style.opacity = 1; $('title').style.pointerEvents = 'auto'; }
 addEventListener('pointerdown', () => { if (!introDone && demo && state === 'menu') dT = Math.max(dT, 6.3); });
 const CAPS = [[.3, 'Al Von Kan. Necro King.'], [2.4, 'Currently being chased.'], [4.3, 'By absolutely everyone.']];
@@ -534,10 +542,29 @@ function cubeSphere(r, n, rep) {
   })();
 })();
 
+// ── Bloom (High tier only): glow on flames, gems, eyes and crystals. Falls back automatically if anything fails. Add #nobloom to the link to disable. ──
+window.noBloom = location.hash.indexOf('nobloom') >= 0;
+function applyBloom() {
+  if (!(tier.cap > 200) || window.noBloom || !THREE.EffectComposer || !THREE.UnrealBloomPass || !THREE.GammaCorrectionShader) { window.composer = null; return; }
+  if (window.composer) return;
+  try {
+    const w = innerWidth, h = innerHeight; let rt;
+    try { rt = new THREE.WebGLMultisampleRenderTarget(w * tier.pr, h * tier.pr, { format: THREE.RGBAFormat }); } catch (e) { rt = undefined; }
+    const c = new THREE.EffectComposer(renderer, rt);
+    c.setPixelRatio(tier.pr); c.setSize(w, h);
+    c.addPass(new THREE.RenderPass(scene, camera));
+    c.addPass(new THREE.UnrealBloomPass(new THREE.Vector2(w / 2, h / 2), .7, .55, .7));
+    c.addPass(new THREE.ShaderPass(THREE.GammaCorrectionShader));
+    window.composer = c;
+    const check = () => { const bad = (renderer.info.programs || []).filter(p => p.diagnostics && p.diagnostics.runnable === false).length; if (bad && window.composer === c) { window.composer = null; console.warn('Bloom disabled: a shader failed to compile on this device'); } };
+    setTimeout(check, 3000); setTimeout(check, 8000);
+  } catch (e) { console.warn('Bloom unavailable', e); window.composer = null; }
+}
+
 // ── Game flow ──
 function startGame() {
   tier = TIERS[tierSel === 'auto' ? (LOWDEV ? 'low' : 'high') : tierSel];
-  sunL.castShadow = tier.cap > 200; resize();
+  sunL.castShadow = tier.cap > 200; applyBloom(); resize();
   Object.assign(P, { hp: 100, max: 100, xp: 0, lvl: 1, spd: 17, mag: 12, pow: 1, iframe: 0 });
   P.dir.set(0, 1, 0); P.fwd.set(0, 0, -1); P.face.set(0, 0, -1);
   enemies = []; gems = []; projs = []; wolves = []; time = 0; kills = 0; spawnAcc = 0; daggerCd = 0;
@@ -679,7 +706,7 @@ function loop(now) {
     ehead.count = eshad.count = emesh.count = eeyes.count = gmesh.count = omesh.count = dmesh.count = wmesh.count = 0;
   }
   if (state === 'play') pm.visible = true;
-  renderer.render(scene, camera);
+  if (window.composer) { try { composer.render(); } catch (e) { console.warn('bloom render failed', e); window.composer = null; renderer.render(scene, camera); } } else renderer.render(scene, camera);
 }
 resize(); requestAnimationFrame(loop);
 </script>
